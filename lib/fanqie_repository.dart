@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:html/parser.dart' as html_parser;
 
+import 'book_search.dart';
 import 'catalog.dart';
 import 'fanqie_api.dart';
 import 'fanqie_font.dart';
@@ -81,6 +82,19 @@ class FanqieRepository extends NovelRepository
     final novel = await _fetch(key, localId);
     return novel == null ? const [] : [novel];
   }
+
+  /// 带分类的搜索。
+  ///
+  /// 上游默认实现会拿 `'${book.id}'` 去比对用户输入 —— 但番茄书的 id 是本地
+  /// 映射后的小整数（0x40000000 起），跟 19 位 bookId 永远对不上，于是选「ID」
+  /// 分类搜索必然过滤成空。这里直接忽略分类，直达结果原样返回。
+  @override
+  Future<NovelPage> searchFilteredPage(
+    String query, {
+    BookSearchField field = BookSearchField.all,
+    int page = 1,
+    bool refresh = false,
+  }) async => NovelPage.fromItems(await search(query), page);
 
   @override
   Future<Novel> detail(Novel novel) async {
