@@ -226,17 +226,22 @@ class FanqieRepository extends NovelRepository
     int page = 1,
     bool refresh = false,
   }) async {
-    if (page > 1) return const NovelPage(items: [], page: 1);
-    final raw = await api.fetchHomeBooks();
+    final feed = await api.fetchHomeFeed(page: page);
     final items = <Novel>[];
-    for (final entry in raw) {
-      final book = FanqieBook.fromJson(entry);
+    for (final entry in feed.books) {
+      // 商城接口返回的字段和搜索一样是 snake_case，走同一个解析器。
+      final book = FanqieBook.fromAppJson(entry);
       if (book == null) continue;
       final localId = await ids.localIdFor(book.id);
       items.add(_toNovel(book, localId));
     }
-    if (items.isEmpty) return const NovelPage(items: [], page: 1);
-    return NovelPage.fromItems(items, 1);
+    // 这一页的 items 已经是第 page 页的切片，不能再交给 fromItems 切一遍
+    // （那样第 2 页会被 skip 掉整页）。hasMore 由 totalPages > page 推出来。
+    return NovelPage(
+      items: List.unmodifiable(items),
+      page: page,
+      totalPages: items.isEmpty ? page : page + 1,
+    );
   }
 
   @override

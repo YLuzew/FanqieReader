@@ -159,6 +159,23 @@ class MyPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        if (account != null && !account.authenticated) ...[
+                          const SizedBox(width: 4),
+                          GlassTextButton(
+                            key: const ValueKey('my-login'),
+                            onPressed: () => pushNovelPage<void>(
+                              context,
+                              WenkuAccountPage(
+                                account: account,
+                                state: state,
+                                repository: repository,
+                              ),
+                              reduceMotion: state.reduceMotion,
+                            ),
+                            child: const AppText('登录'),
+                          ),
+                        ],
+                        const SizedBox(width: 8),
                         const ArchiveIcon(
                           CupertinoIcons.chevron_right,
                           size: 14,

@@ -85,6 +85,17 @@ abstract final class FanqieEndpoints {
   static const categoryLanding = '/reading/bookapi/new_category/landing/v/';
   static const categoryList = '/reading/bookapi/category/list/v/';
 
+  /// 商城首页（发现页）的推荐流。
+  ///
+  /// 响应的 `data.tab_item` 是一排 tab，只有 `tab_type=2` 那个带 `cell_data`；
+  /// 区块再套区块，最里层才挂 `book_data[0]`。中间那些 `show_type` 100/339
+  /// 的格子是 banner 和「书荒广场」入口，没有书。
+  static const homeTab = '/reading/bookapi/bookmall/tab/v';
+
+  /// 同一个区块往下翻。`cell_id` 与 `session_id` 都由服务端签发，
+  /// 必须从上一页的响应里取，自己编一个会拿到空列表。
+  static const homeFeed = '/reading/bookapi/bookmall/cell/change/v';
+
   /// 书架/历史/进度走的是 api5-normal-*，不是正文那台网关。
   /// 路径取自 fqapp 的 account_library.rs（官方 App 的 RPC 反查）。
   static const shelfList = '/reading/bookapi/bookshelf/list/v1/';
@@ -362,6 +373,40 @@ class FanqieApi {
       throw const FanqieException('正文接口返回空响应，签名可能没对');
     }
     return Uint8List.fromList(bytes);
+  }
+
+  /// `_appGet` 的 JSON 版：顺手做掉解码与 `code != 0` 的判定。
+  ///
+  /// 这类接口出错时会回一整页 HTML（状态码还是 200），直接 `jsonDecode`
+  /// 抛的是 `FormatException`，看不出是哪个接口 —— 所以先看一眼开头。
+  Future<Map<String, Object?>> _appJson(
+    String path,
+    String query, {
+    String? host,
+    String? cookie,
+    String? userAgent,
+  }) async {
+    final bytes = await _appGet(
+      path,
+      query,
+      host: host,
+      cookie: cookie,
+      userAgent: userAgent,
+    );
+    final text = utf8.decode(bytes, allowMalformed: true);
+    if (text.trimLeft().startsWith('<')) {
+      throw const FanqieException('接口返回的是网页，不是 JSON');
+    }
+    final decoded = jsonDecode(text);
+    if (decoded is! Map) throw const FanqieException('接口返回的不是对象');
+    final code = decoded['code'];
+    if (code != 0) {
+      throw FanqieException(
+        '接口返回 $code',
+        detail: '${decoded['message'] ?? ''}',
+      );
+    }
+    return Map<String, Object?>.from(decoded);
   }
 
   Map<String, Object?> get _commonQuery => {
@@ -744,37 +789,125 @@ class FanqieApi {
     }
   }
 
-  /// 首页（发现页）的书单。
+  /// 发现页的书流，一页 12 本，能一直往下翻。
   ///
-  /// 番茄首页的 SSR 里就带着几组推荐书单，不需要额外接口：
-  ///   editorList 编辑推荐(9) / weekList 本周强推(8) / updateList 最近更新(20)
-  /// boyList / girlList 在没有登录态时是 null，所以不指望它们。
-  Future<List<Map<String, Object?>>> fetchHomeBooks() async {
-    final html = await _fetchHtml(
-      Uri.https(FanqieEndpoints.webHost, '/').toString(),
+  /// 旧实现抓网页版首页的 SSR，只有编辑力荐 4 + 本周推荐 4 + 一批更新列表，
+  /// 而且更新列表那批不带封面，界面上就是一排黑块。换商城 tab 接口之后
+  /// 一页 12 本、封面齐全，翻页也不再是空页。
+  Future<FanqieHomeFeed> fetchHomeFeed({int page = 1}) async {
+    final offset = (page - 1) * _homePageSize;
+    final wantFirst = offset == 0 || _homeCellId == null || _homeSessionId == null;
+    final query = wantFirst
+        ? '$_homeBaseQuery&tab_type=2&tab_index=0&last_tab_index=0&offset=0'
+        : '$_homeBaseQuery&cell_id=$_homeCellId&offset=$offset&tab_type=2'
+              '&tab_index=0&session_id=$_homeSessionId';
+    final decoded = await _appJson(
+      wantFirst ? FanqieEndpoints.homeTab : FanqieEndpoints.homeFeed,
+      query,
+      host: FanqieEndpoints.shelfHost,
     );
-    final state = _extractInitialState(html);
-    final home = state['home'];
-    if (home is! Map) {
-      throw const FanqieException('首页里没找到书单数据，可能是页面结构变了');
-    }
-    final out = <Map<String, Object?>>[];
-    final seen = <String>{};
-    for (final key in const ['editorList', 'weekList', 'updateList']) {
-      final list = home[key];
-      if (list is! List) continue;
-      for (final item in list) {
-        if (item is! Map) continue;
-        final id = item['bookId'];
-        // updateList 的项没有摘要，但 bookId/bookName/author 都有，够列表用。
-        if (id is! String || !seen.add(id)) continue;
-        out.add(Map<String, Object?>.from(item));
+    final data = decoded['data'];
+    if (data is! Map) throw const FanqieException('发现页没有拿到书流');
+    _rememberHomeCursor(data);
+    final books = <Map<String, Object?>>[];
+    _collectHomeBooks(data, books, 0);
+    return FanqieHomeFeed(books: books, hasMore: books.isNotEmpty);
+  }
+
+  /// 发现页一页多少本。`cell/change/v` 一次固定回 12 条，翻了也只是换一批。
+  static const _homePageSize = 12;
+
+  /// 翻页游标，跟着响应走。换书源、重开 App 都重新取。
+  String? _homeCellId;
+  String? _homeSessionId;
+
+  /// 商城接口那一套版本号。签名会把 `version_name` 写进 x-argus，
+  /// 所以这几个值必须成套，别跟正文网关那套 66.9 混着用。
+  String get _homeBaseQuery =>
+      'iid=${session.installId}'
+      '&device_id=${session.deviceId}'
+      '&ac=wifi'
+      '&channel=xiaomi_1967_64'
+      '&aid=${FanqieEndpoints.aid}'
+      '&app_name=novelapp'
+      '&version_code=72432'
+      '&version_name=7.2.4.32'
+      '&device_platform=android'
+      '&os=android'
+      '&ssmix=a'
+      '&device_type=25053RT47C'
+      '&device_brand=Redmi'
+      '&language=zh'
+      '&os_api=36'
+      '&os_version=16'
+      '&manifest_version_code=72432'
+      '&resolution=1280%2A2620'
+      '&dpi=520'
+      '&update_version_code=72432'
+      '&host_abi=arm64-v8a'
+      '&dragon_device_type=phone'
+      '&pv_player=72432'
+      '&compliance_status=0'
+      '&need_personal_recommend=1'
+      '&player_so_load=1'
+      '&is_android_pad_screen=0'
+      '&client_req_type=1'
+      '&client_template=0';
+
+  /// 从响应里挑第一个有 `cell_id` 的区块当翻页游标。
+  ///
+  /// 首页那次返回的 `tab_item` 里只有被选中的 tab 带 `cell_data`，
+  /// 所以扫到第一个就收手，不往下找。
+  void _rememberHomeCursor(Map<Object?, Object?> data) {
+    final tabs = data['tab_item'];
+    if (tabs is! List) return;
+    for (final tab in tabs) {
+      if (tab is! Map) continue;
+      final cells = tab['cell_data'];
+      if (cells is! List || cells.isEmpty) continue;
+      for (final cell in cells) {
+        if (cell is! Map) continue;
+        final id = cell['cell_id_str'] ?? cell['cell_id'];
+        if (id != null && '$id' != '0') _homeCellId = '$id';
+        final sid = cell['session_id'] ?? tab['session_id'];
+        if (sid is String && sid.isNotEmpty) _homeSessionId = sid;
+        if (_homeCellId != null) return;
       }
     }
-    if (out.isEmpty) {
-      throw const FanqieException('首页书单是空的，可能触发了访问校验');
+  }
+
+  /// 递归把 `book_data[0]` 全部捞出来。
+  ///
+  /// 区块嵌套层数不固定（推荐流是三层），所以不写死路径；遇到 banner 那种
+  /// 没有 `book_data` 的格子就继续往下钻，遇到书就收下并停止下钻。同一本书
+  /// 在推荐流里可能重复出现，按 `book_id` 去重。
+  void _collectHomeBooks(
+    Object? node,
+    List<Map<String, Object?>> out,
+    int depth,
+  ) {
+    if (depth > 6) return;
+    if (node is List) {
+      for (final item in node) {
+        _collectHomeBooks(item, out, depth + 1);
+      }
+      return;
     }
-    return out;
+    if (node is! Map) return;
+    final books = node['book_data'];
+    if (books is List && books.isNotEmpty) {
+      final book = books.first;
+      if (book is Map) {
+        final id = book['book_id'];
+        if (id != null && out.every((e) => '${e['book_id']}' != '$id')) {
+          out.add(Map<String, Object?>.from(book));
+        }
+      }
+      return;
+    }
+    for (final value in node.values) {
+      _collectHomeBooks(value, out, depth + 1);
+    }
   }
 
   /// 读某本书的阅读进度。
@@ -1127,6 +1260,17 @@ class FanqieCategory {
 
   final int id;
   final String name;
+}
+
+/// 发现页一页的结果。
+class FanqieHomeFeed {
+  const FanqieHomeFeed({required this.books, required this.hasMore});
+
+  /// 这一页的书，字段与搜索返回的 `book_data[0]` 一致（snake_case）。
+  final List<Map<String, Object?>> books;
+
+  /// 还有没有下一页。接口没有明确的结束标记，拿到空页就自然停了。
+  final bool hasMore;
 }
 
 /// 目录里的一章。
