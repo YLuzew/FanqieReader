@@ -684,10 +684,6 @@ class HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                                     height: FrostedHeader.toolbarHeight,
                                     child: _expandedSearchHeader(context),
                                   ),
-                                  SizedBox(
-                                    height: _searchTabsHeight(context),
-                                    child: _searchTabs(context),
-                                  ),
                                 ],
                               )
                             : ArchiveMotionScope(
@@ -939,34 +935,11 @@ class HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
     ],
   );
 
-  double _searchTabsHeight(BuildContext context) =>
-      math.max(48, MediaQuery.textScalerOf(context).scale(14) * 1.4 + 12) + 16;
-
-  Widget _searchTabs(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 4, bottom: 4),
-    child: AppControls.segments<BookSearchField>(
-      context,
-      key: const ValueKey('home-search-tabs'),
-      groupValue: _activeSearch.searchField,
-      children: {
-        BookSearchField.title: Text(appText(context, '书名')),
-        BookSearchField.author: Text(appText(context, '作者')),
-        BookSearchField.tags: Text(appText(context, '标签')),
-        BookSearchField.id: Text(appText(context, 'ID')),
-      },
-      onValueChanged: (field) {
-        if (field != null) _selectSearchField(field);
-      },
-    ),
-  );
-
-  Future<void> _selectSearchField(BookSearchField field) async {
-    if (_activeSearch.searchField == field) return;
-    _dismissSearchKeyboard();
-    final pending = _activeSearch.selectSearchField(field);
-    setState(() {});
-    await pending;
-  }
+  /// 搜索页原来有一排「书名 / 作者 / 标签 / ID」的字段切换。番茄的搜索是
+  /// 书名、作者、标签混在一次查询里由服务端排序，这个切换对结果没有任何
+  /// 影响（番茄仓库里 search() 根本不看 field），所以整排去掉了。
+  /// 高度给 0，让结果列表直接贴到搜索框下面。
+  double _searchTabsHeight(BuildContext context) => 0;
 }
 
 /// Route focus only changes search lifecycle bookkeeping. Keep that inherited
