@@ -536,6 +536,43 @@ class FanqieApi {
     return Map<String, Object?>.from(data);
   }
 
+  /// 阅读历史，服务端按最近读过排。
+  ///
+  /// 参数取自 fqapp 的 `account_history.rs`：`limit=0` 表示「全给我」，
+  /// `offset` 用响应里的 `next_offset` 往下翻。`last_min_read_timestamp_ms`
+  /// 和 `is_first_load` 是官方 SDK 的默认值，漏了会被判参数错误。
+  Future<Map<String, Object?>?> fetchReadHistory({
+    int offset = 0,
+    bool isFirstLoad = true,
+  }) async {
+    final auth = cookie ?? '';
+    if (auth.isEmpty) return null;
+    final query =
+        'aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&device_platform=android'
+        '&version_code=${FanqieEndpoints.shelfVersionCode}'
+        '&version_name=${FanqieEndpoints.shelfVersionName}'
+        '&device_id=${session.deviceId}'
+        '&iid=${session.installId}'
+        '&book_type=0'
+        '&limit=0'
+        '&offset=$offset'
+        '&last_min_read_timestamp_ms=0'
+        '&full_field=true'
+        '&is_first_load=$isFirstLoad'
+        '&query_soft_deleted=false';
+    final decoded = await _appJson(
+      FanqieEndpoints.readHistory,
+      query,
+      host: FanqieEndpoints.host,
+      cookie: auth,
+      userAgent: FanqieEndpoints.shelfUserAgent,
+    );
+    final data = decoded['data'];
+    return data is Map ? Map<String, Object?>.from(data) : null;
+  }
+
   /// 书名搜索。
   ///
   /// 网页版的 `/api/reader/*` 对未登录只回空 body，但 App 网关的
