@@ -12,6 +12,9 @@ import 'app_window_insets.dart';
 import 'app_licenses.dart';
 import 'app_repository.dart';
 import 'catalog.dart';
+import 'fanqie_account.dart';
+import 'fanqie_api.dart';
+import 'fanqie_repository.dart';
 import 'legacy_wenku_repository.dart';
 import 'library_state.dart';
 import 'local_platform.dart';
@@ -79,10 +82,13 @@ Future<void> main() async {
       WidgetsBinding.instance.platformDispatcher.platformBrightness,
   };
   SystemChrome.setSystemUIOverlayStyle(novelSystemUiStyle(brightness));
+  // 内容源与账号共用同一条番茄连接：登录态 Cookie 写进 api，Repository 立刻能看到。
+  final fanqieApi = FanqieApi();
   final WenkuAccount? account = LocalPlatform.fileActions
-      ? WenkuAccount()
+      ? FanqieAccount(api: fanqieApi)
       : null;
-  const remote = LegacyWenkuRepository();
+  // LegacyWenkuRepository 是上游留下的空桩，仍保留但不再使用。
+  final remote = FanqieRepository(api: fanqieApi);
   final repository = LocalPlatform.fileActions
       ? await openApplicationLibrary(remote: remote, network: network)
       : const DemoNovelRepository();
