@@ -846,12 +846,12 @@ class HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                     title: switch (_searchScope) {
                       1 => '书架',
                       2 => '本地',
-                      _ => '轻小说文库',
+                      _ => '番茄阅读',
                     },
                     code: switch (_searchScope) {
                       1 => '02 / PERSONAL ARCHIVE',
                       2 => '03 / LOCAL ARCHIVE',
-                      _ => 'WENKU8 / READING ARCHIVE',
+                      _ => 'FANQIE / READING ARCHIVE',
                     },
                     brand: _searchScope == 0,
                   ),
@@ -1017,8 +1017,8 @@ class DiscoverPage extends StatelessWidget {
     children: [
       Expanded(
         child: const ArchiveMasthead(
-          title: '轻小说文库',
-          code: 'WENKU8 / READING ARCHIVE',
+          title: '番茄阅读',
+          code: 'FANQIE / READING ARCHIVE',
           brand: true,
         ),
       ),

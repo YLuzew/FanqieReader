@@ -146,7 +146,7 @@ class MyPage extends StatelessWidget {
                                                 : features.shelfSync!.syncedAt != null
                                                 ? '\n书架已与文库同步'
                                                 : ''}'
-                                    : '轻小说文库账号 · 云书架与每日签到',
+                                    : '番茄阅读账号 · 云书架与每日签到',
                                 style: TextStyle(
                                   fontSize: 12,
                                   height: 1.6,

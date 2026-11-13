@@ -139,6 +139,29 @@ class FanqieRepository extends NovelRepository
     for (final channel in channels) PublicationLibrary(channel.id, channel.name),
   ];
 
+  /// 「发现」页。
+  ///
+  /// 番茄首页 SSR 里带三组书单（编辑推荐 / 本周强推 / 最近更新），一次请求
+  /// 全拿到。首页没有分页，第二页直接返回空 —— 别让 UI 一直转圈。
+  @override
+  Future<NovelPage> browse({
+    NovelSort sort = NovelSort.lastUpdate,
+    int page = 1,
+    bool refresh = false,
+  }) async {
+    if (page > 1) return const NovelPage(items: [], page: 1);
+    final raw = await api.fetchHomeBooks();
+    final items = <Novel>[];
+    for (final entry in raw) {
+      final book = FanqieBook.fromJson(entry);
+      if (book == null) continue;
+      final localId = await ids.localIdFor(book.id);
+      items.add(_toNovel(book, localId));
+    }
+    if (items.isEmpty) return const NovelPage(items: [], page: 1);
+    return NovelPage.fromItems(items, 1);
+  }
+
   @override
   Future<NovelPage> browsePublication(
     int libraryId, {

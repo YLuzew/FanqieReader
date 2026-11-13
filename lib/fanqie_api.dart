@@ -223,6 +223,39 @@ class FanqieApi {
     }
   }
 
+  /// 首页（发现页）的书单。
+  ///
+  /// 番茄首页的 SSR 里就带着几组推荐书单，不需要额外接口：
+  ///   editorList 编辑推荐(9) / weekList 本周强推(8) / updateList 最近更新(20)
+  /// boyList / girlList 在没有登录态时是 null，所以不指望它们。
+  Future<List<Map<String, Object?>>> fetchHomeBooks() async {
+    final html = await _fetchHtml(
+      Uri.https(FanqieEndpoints.webHost, '/').toString(),
+    );
+    final state = _extractInitialState(html);
+    final home = state['home'];
+    if (home is! Map) {
+      throw const FanqieException('首页里没找到书单数据，可能是页面结构变了');
+    }
+    final out = <Map<String, Object?>>[];
+    final seen = <String>{};
+    for (final key in const ['editorList', 'weekList', 'updateList']) {
+      final list = home[key];
+      if (list is! List) continue;
+      for (final item in list) {
+        if (item is! Map) continue;
+        final id = item['bookId'];
+        // updateList 的项没有摘要，但 bookId/bookName/author 都有，够列表用。
+        if (id is! String || !seen.add(id)) continue;
+        out.add(Map<String, Object?>.from(item));
+      }
+    }
+    if (out.isEmpty) {
+      throw const FanqieException('首页书单是空的，可能触发了访问校验');
+    }
+    return out;
+  }
+
   /// 取一段网页 HTML。
   Future<String> _fetchHtml(String url, {String? referer}) async {
     final uri = Uri.parse(url);

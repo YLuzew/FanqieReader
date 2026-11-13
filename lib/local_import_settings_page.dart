@@ -174,7 +174,7 @@ class _LocalImportSettingsPageState extends State<LocalImportSettingsPage> {
                   ),
                   const SizedBox(height: 8),
                   const AppText(
-                    '在文件管理器点开书籍，选择「轻小说文库」。如系统显示「始终」，选中后即可作为这类文件的默认阅读器；不同文件格式需分别选择。',
+                    '在文件管理器点开书籍，选择「番茄阅读」。如系统显示「始终」，选中后即可作为这类文件的默认阅读器；不同文件格式需分别选择。',
                     style: TextStyle(fontSize: 13, height: 1.6),
                   ),
                   const SizedBox(height: 18),

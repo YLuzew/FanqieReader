@@ -2,7 +2,7 @@ import 'package:flutter/painting.dart';
 
 import 'reading_visual_theme.dart';
 
-const readingExportBrandName = '轻小说文库';
+const readingExportBrandName = '番茄阅读';
 
 /// Resolve artwork once for a surface's snapshot. An artwork date does not add
 /// a recorded date to the content; dateless excerpts can still follow the season.

@@ -681,7 +681,7 @@ class _NovelAppState extends State<NovelApp> with WidgetsBindingObserver {
         _lastTypeface = state.appFontId;
         return MaterialApp(
           navigatorKey: _navigator,
-          title: '轻小说文库',
+          title: '番茄阅读',
           locale: state.language.locale ?? _systemLocale,
           supportedLocales: const [
             Locale('zh', 'CN'),

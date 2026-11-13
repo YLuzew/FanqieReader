@@ -12,14 +12,14 @@ import '../legacy_transport.dart';
 export 'current_release_content.dart'
     show currentReleaseNotes, publicReleaseNotes;
 
-const officialUpdateRepository = 'mikufoxxx/Wenku8_Flutter';
+const officialUpdateRepository = 'YLuzew/FanqieReader';
 const updateMirrorOrigin = 'https://git.3952039.xyz';
 const updateRepository = String.fromEnvironment(
   'UPDATE_REPOSITORY',
   defaultValue: officialUpdateRepository,
 );
-const currentAppVersion = '0.5.6';
-const currentAppBuild = 2277;
+const currentAppVersion = '0.1.0';
+const currentAppBuild = 1;
 
 class ReleaseVersion implements Comparable<ReleaseVersion> {
   const ReleaseVersion(this.major, this.minor, this.patch, [this.build = 0]);

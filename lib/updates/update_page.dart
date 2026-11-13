@@ -344,7 +344,7 @@ class _AppUpdatePromptRoute extends PopupRoute<bool>
                                 ),
                                 const SizedBox(height: 6),
                                 AppText(
-                                  '轻小说文库 ${release.version.name}',
+                                  '番茄阅读 ${release.version.name}',
                                   style: TextStyle(
                                     color: Theme.of(
                                       context,
@@ -455,7 +455,7 @@ class AppUpdatePage extends StatelessWidget {
               onPressed: () => Navigator.pop(context),
             ),
             title: const ArchiveRouteTitle(
-              title: '关于轻小说文库',
+              title: '关于番茄阅读',
               code: 'SYSTEM / ABOUT',
             ),
           ),
@@ -468,7 +468,7 @@ class AppUpdatePage extends StatelessWidget {
               padding.bottom + 32,
             ),
             children: [
-              const ArchiveSection(title: '轻小说文库', code: 'WENKU8 / FLUTTER'),
+              const ArchiveSection(title: '番茄阅读', code: 'FANQIE / FLUTTER'),
               const SizedBox(height: 12),
               AppText(
                 '当前版本 $version · 构建 $build',
@@ -540,7 +540,7 @@ class AppUpdatePage extends StatelessWidget {
                       if (service.checked && service.release != null) ...[
                         const SizedBox(height: 8),
                         AppText(
-                          '最新正式版 ${service.release!.version.name}',
+                          '最新版本 ${service.release!.version.name}',
                           key: const ValueKey('latest-app-version'),
                           style: TextStyle(
                             fontSize: 13,
@@ -633,7 +633,7 @@ class AppUpdatePage extends StatelessWidget {
                       key: const ValueKey('app-open-source-licenses'),
                       onPressed: () => showLicensePage(
                         context: context,
-                        applicationName: '轻小说文库',
+                        applicationName: '番茄阅读',
                         applicationVersion: currentAppVersion,
                         applicationLegalese:
                             'Copyright © 2026 Wenku8 Flutter contributors',
