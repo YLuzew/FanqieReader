@@ -39,8 +39,8 @@ Future<FanqieFilterSelection?> showFanqieFilterSheet(
 /// 番茄自己的筛选面板。
 ///
 /// 文库那套「榜单 / 标签 / 出版文库 / 屏蔽」在番茄这边没有对应物 ——
-/// 番茄只给三个维度：排序（sort_by）、状态（book_status）、细分标签
-/// （sub_category），而且只挂在分类落地页上。所以这里照着番茄的真实
+/// 番茄给的是排序（sort_by）、状态（book_status）、细分标签（sub_category），
+/// 另外还有一组字数（word_type）暂时没接。这些只挂在分类落地页上，所以这里照着番茄的真实
 /// 参数重做，不硬套文库的分类体系。
 class FanqieFilterSheet extends StatefulWidget {
   const FanqieFilterSheet({super.key, required this.repository});

@@ -125,6 +125,16 @@ class FanqieLoginPlugin :
  */
 class FanqieLoginActivity : Activity() {
 
+    companion object {
+        /** 回传给 Flutter 的 cookie 串。 */
+        const val EXTRA_COOKIE = "org.mewx.wenku8/fanqie_cookie"
+
+        /** 打开的就是番茄首页 —— 登录入口在那个页面的顶栏里。 */
+        const val START_URL = "https://fanqienovel.com/"
+
+        const val COOKIE_URL = "https://fanqienovel.com"
+    }
+
     private lateinit var web: WebView
     private var handled = false
 
