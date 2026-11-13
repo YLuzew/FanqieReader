@@ -11,7 +11,6 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -181,7 +180,7 @@ class FanqieLoginActivity : Activity() {
         root.addView(bar)
         root.addView(
             web,
-            FrameLayout.LayoutParams(
+            LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f,
