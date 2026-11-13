@@ -163,10 +163,12 @@ class FanqieLoginActivity : Activity() {
             textSize = 14f
             setTextColor(Color.parseColor("#666666"))
         }
-        bar.addView(
-            hint,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        val hintParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
         )
+        hintParams.weight = 1f
+        bar.addView(hint, hintParams)
         bar.addView(
             Button(this).apply {
                 text = "完成"
