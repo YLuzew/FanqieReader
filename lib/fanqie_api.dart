@@ -3,15 +3,23 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-// 番茄小说接口层。
+// 番茄小说的传输层。
 //
-// 这里的域名、路径与公共参数来自公开的社区实现，尚未在本机对线上接口逐条实测：
-// 番茄的正文接口带 bdturing 滑块与设备指纹校验，服务端可以在任何时候改变要求。
-// 因此每个请求失败都归一成 FanqieException，由上层转成可读提示；
-// 协议一旦变动，只改本文件的 FanqieEndpoints 与 FanqieApi.headers 即可，
-// Repository 与 UI 层无需改动。
+// 走的是**网页版**（fanqienovel.com），不是 App 的 API。
+// 原因：App 的 api5-normal-*.fqnovel.com 需要一套签名（X-Fq-Device-Id、
+// 各种 nonce 与时间戳），缺一个就返回 200 + 空 body —— 静默拒绝，
+// 光看状态码发现不了。网页版不需要签名，缺点是正文有字体混淆，
+// 由 fanqie_font.dart 的表还原。
+//
+// 已验证：
+//   GET https://fanqienovel.com/page/{bookId}     -> window.__INITIAL_STATE__.page
+//   GET https://fanqienovel.com/reader/{itemId}   -> window.__INITIAL_STATE__.reader.chapterData
+// 两者都带 Referer 指向书页，4 秒内返回 600KB / 40KB。
+//
+// 未验证：搜索、频道、标签。网页版这几个入口要么是 POST，要么需要登录态，
+// 下面保留了 App API 的路径常量与 get()，但都不保证能通。
 
-/// 一次失败。message 面向用户，detail 面向日志。
+/// 番茄接口抛出的异常。
 class FanqieException implements Exception {
   const FanqieException(this.message, {this.code, this.detail});
 
@@ -20,296 +28,411 @@ class FanqieException implements Exception {
   final String? detail;
 
   @override
-  String toString() =>
-      'FanqieException(${code ?? '-'}): $message${detail == null ? '' : ' | $detail'}';
+  String toString() => detail == null ? message : '$message（$detail）';
 }
 
-/// 接口地址与公共参数。协议变动时只改这一处。
+/// 网页版的固定参数。
 abstract final class FanqieEndpoints {
-  /// 主力线路。服务端按地域分流，另一条在 [alternateHost]。
+  /// 网页版主站。
+  static const webHost = 'fanqienovel.com';
+
+  /// App API 的域名。保留着，当前不用于正文。
   static const host = 'api5-normal-sinfonlineb.fqnovel.com';
   static const alternateHost = 'api5-normal-lf.fqnovel.com';
 
-  /// 番茄读书的 App 标识。1967 是社区实现里长期在用的值。
+  /// App 侧的公共参数。抓包得来的，缺一个就静默返回空 body。
   static const aid = 1967;
   static const appName = 'novelapp';
   static const channel = 'huawei_5140301';
   static const versionCode = 680;
   static const versionName = '6.8.0';
 
-  /// 书籍详情（可批量）。
+  /// 网页版路径。
+  static String bookPage(String bookId) => '/page/$bookId';
+  static String readerPage(String itemId) => '/reader/$itemId';
+
+  /// App 侧路径。未实测，留着备查。
   static const bookDetail = '/reading/bookapi/multi-detail/v/';
-
-  /// 目录。
   static const directory = '/reading/bookapi/directory/v/';
-
-  /// 正文。这是风控最重的一条。
   static const content = '/reading/reader/full/v/';
-
-  /// 搜索。
   static const search = '/reading/bookapi/search/page/v/';
 
-  /// 书城频道列表（对应 PublicationCatalog）。
-  static const channels = '/reading/bookapi/channel/v/';
+  /// 桌面浏览器 UA。移动端 UA 会拿到另一套页面结构，别换。
+  static const userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-  /// 频道下的书单。
-  static const channelBooks = '/reading/bookapi/channel/books/v/';
+  /// 从 Cookie 里取 csrf token 用的键。网页版没它也能读公开章节。
+  static const csrfCookie = 'passport_csrf_token';
 }
 
-/// 本机在番茄服务端眼中的身份。
-///
-/// 没有真实设备指纹，这里生成一组稳定的随机值并在整个进程内复用。
-/// 之所以要稳定：服务端会把 device_id 与 install_id 和请求频次绑定，
-/// 每次请求换新的比固定一个更容易触发风控。
+/// 设备侧的一次性标识。只有 App API 用得上，网页版不需要。
 class FanqieSession {
   FanqieSession({String? deviceId, String? installId})
-    : deviceId = deviceId ?? _randomToken(20),
-      installId = installId ?? _randomToken(11);
+    : deviceId = deviceId ?? _randomDigits(20),
+      installId = installId ?? _randomDigits(11);
 
   final String deviceId;
   final String installId;
 
   static final _random = Random.secure();
 
-  static String _randomToken(int length) {
-    const alphabet = '0123456789abcdef';
-    return String.fromCharCodes(
-      List.generate(
-        length,
-        (_) => alphabet.codeUnitAt(_random.nextInt(alphabet.length)),
-      ),
-    );
-  }
-
-  /// 每次请求一个新值，用于 X-Request-Id。
-  static String requestId() {
+  static String _randomDigits(int length) {
     final buffer = StringBuffer();
-    for (var i = 0; i < 32; i++) {
-      buffer.write('0123456789abcdef'[_random.nextInt(16)]);
+    for (var i = 0; i < length; i += 1) {
+      buffer.write(_random.nextInt(10));
     }
     return buffer.toString();
   }
+
+  static String requestId() {
+    final seconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    return '$seconds${_random.nextInt(900000) + 100000}';
+  }
 }
 
-/// 底层传输。只负责「发出去、拿回来、判断状态」，不解释业务字段。
+/// 番茄的 HTTP 客户端。
+///
+/// 只做两件事：取书页、取章节。两者都返回解码后的纯数据。
 class FanqieApi {
   FanqieApi({FanqieSession? session, Duration? timeout})
     : session = session ?? FanqieSession(),
-      timeout = timeout ?? const Duration(seconds: 12);
+      timeout = timeout ?? const Duration(seconds: 20),
+      _client = HttpClient() {
+    _client.userAgent = FanqieEndpoints.userAgent;
+    _client.connectionTimeout = this.timeout;
+  }
 
   final FanqieSession session;
   final Duration timeout;
-  HttpClient? _client;
+  final HttpClient _client;
 
-  /// 登录态 Cookie（sessionid / sid_tt / passport_csrf_token 等）。
-  /// null 表示游客：书库与搜索仍可用，正文与书架同步会被拦。
-  /// 由 FanqieAccount 在登录成功或导入 Cookie 时写入。
+  /// 登录态。有值时拼进 Cookie 头；网页版的公开章节不需要它。
   String? cookie;
 
-  HttpClient get _http => _client ??= HttpClient()
-    ..connectionTimeout = timeout
-    ..userAgent = headers['User-Agent'];
+  /// 单次响应的体积上限。正文页最大见过 700KB，12MB 足够。
+  static const _maxBody = 12 * 1024 * 1024;
 
-  /// 番茄 App 的请求头。缺任何一条都可能被判定为非客户端流量。
-  Map<String, String> get headers => {
-    'User-Agent':
-        'com.dragon.read/${FanqieEndpoints.versionName} (Linux; U; Android 13; zh_CN; '
-        'Pixel 6; Build/TQ3A.230805.001; Cronet/TTNetVersion:5f296cf0 2024-01-01)',
-    'Accept': 'application/json; charset=utf-8',
-    'Accept-Encoding': 'gzip',
-    'X-Fq-Device-Id': session.deviceId,
-    'X-Request-Id': FanqieSession.requestId(),
-    'Cookie': [
-      'install_id=${session.installId}',
-      'store-region=cn',
-      if ((cookie ?? '').isNotEmpty) cookie!,
-    ].join('; '),
+  Map<String, String> get _webHeaders => {
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,'
+        'image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    if ((cookie ?? '').isNotEmpty) 'Cookie': cookie!,
   };
 
-  /// 公共查询参数。番茄把设备信息放在 query 里而不是 body。
-  Map<String, String> get commonQuery => {
-    'aid': '${FanqieEndpoints.aid}',
+  Map<String, String> get _appHeaders => {
+    'Accept': 'application/json',
+    'X-Fq-Device-Id': session.deviceId,
+    'X-Request-Id': FanqieSession.requestId(),
+    if ((cookie ?? '').isNotEmpty) 'Cookie': cookie!,
+  };
+
+  Map<String, Object?> get _commonQuery => {
+    'aid': FanqieEndpoints.aid,
     'app_name': FanqieEndpoints.appName,
     'channel': FanqieEndpoints.channel,
-    'version_code': '${FanqieEndpoints.versionCode}',
+    'version_code': FanqieEndpoints.versionCode,
     'device_id': session.deviceId,
     'iid': session.installId,
     'ac': 'wifi',
     'os': 'android',
   };
 
-  /// 发一个 GET 并解出 `data` 字段。
+  /// 取一本书的书页，返回 `window.__INITIAL_STATE__.page`。
   ///
-  /// 番茄的成功响应形态是 `{"code":0,"message":"success","data":{...}}`；
-  /// 风控拦截通常是 code 非 0 或直接返回 HTML，两种情况都在这里归一。
+  /// 这个对象里同时有书籍元信息和完整的章节目录（chapterListWithVolume），
+  /// 所以详情页与目录页只需要一次请求。
+  Future<Map<String, Object?>> fetchBookPage(String bookId) async {
+    final html = await _fetchHtml(
+      Uri.https(
+        FanqieEndpoints.webHost,
+        FanqieEndpoints.bookPage(bookId),
+      ).toString(),
+    );
+    final state = _extractInitialState(html);
+    final page = state['page'];
+    if (page is! Map) {
+      throw const FanqieException('书页里没找到书籍数据，可能是书籍不存在或页面结构变了');
+    }
+    return Map<String, Object?>.from(page);
+  }
+
+  /// 取一章，返回 `window.__INITIAL_STATE__.reader.chapterData`。
+  ///
+  /// `content` 字段里是带混淆码位的 HTML，本方法**不做解码**，
+  /// 由调用方交给 decodeFanqieGlyphs 处理 —— 传输层不该知道字体的事。
+  Future<Map<String, Object?>> fetchChapter(String itemId) async {
+    final html = await _fetchHtml(
+      Uri.https(
+        FanqieEndpoints.webHost,
+        FanqieEndpoints.readerPage(itemId),
+      ).toString(),
+      referer: Uri.https(
+        FanqieEndpoints.webHost,
+        FanqieEndpoints.bookPage(''),
+      ).toString(),
+    );
+    final state = _extractInitialState(html);
+    final reader = state['reader'];
+    if (reader is! Map) {
+      throw const FanqieException('章节页里没找到正文数据，可能这一章需要登录或已下架');
+    }
+    final chapter = reader['chapterData'];
+    if (chapter is! Map) {
+      throw const FanqieException('章节页里没有 chapterData，可能触发了访问校验');
+    }
+    final data = Map<String, Object?>.from(chapter);
+    if (data['isChapterLock'] == true) {
+      throw const FanqieException('这一章在番茄上要付费或要登录才能看');
+    }
+    return data;
+  }
+
+  /// 取一段网页 HTML。
+  Future<String> _fetchHtml(String url, {String? referer}) async {
+    final uri = Uri.parse(url);
+    try {
+      final request = await _client.getUrl(uri).timeout(timeout);
+      _webHeaders.forEach(request.headers.set);
+      if (referer != null) request.headers.set('Referer', referer);
+      final response = await request.close().timeout(timeout);
+      if (response.statusCode != HttpStatus.ok) {
+        // 把体积读完，否则连接不会释放。
+        await response.drain<void>();
+        throw FanqieException(
+          '番茄返回了 ${response.statusCode}',
+          code: response.statusCode,
+        );
+      }
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        bytes.addAll(chunk);
+        if (bytes.length > _maxBody) {
+          throw const FanqieException('响应超过 12MB，已中断');
+        }
+      }
+      return utf8.decode(bytes, allowMalformed: true);
+    } on SocketException catch (failure) {
+      throw FanqieException('连不上番茄：${failure.message}');
+    } on TimeoutException {
+      throw const FanqieException('番茄响应超时，换个网络再试');
+    } on HandshakeException {
+      throw const FanqieException('和番茄的 HTTPS 握手失败');
+    }
+  }
+
+  /// App API 的 GET。当前没有调用方，保留是因为搜索和频道可能还得走这条路。
+  ///
+  /// 注意：这个接口在参数不全时返回 200 + 空 body，不是错误码。
   Future<Map<String, Object?>> get(
     String path, {
-    Map<String, String> query = const {},
+    Map<String, Object?>? query,
     String? host,
   }) async {
     final uri = Uri.https(
       host ?? FanqieEndpoints.host,
       path,
-      {...commonQuery, ...query},
+      {for (final entry in _commonQuery.entries) entry.key: '${entry.value}'}
+        ..addAll({
+          for (final entry in (query ?? const {}).entries)
+            if (entry.value != null) entry.key: '${entry.value}',
+        }),
     );
-    HttpClientRequest request;
     try {
-      request = await _http.getUrl(uri).timeout(timeout);
-    } on TimeoutException {
-      throw const FanqieException('连接番茄服务器超时，请检查网络');
-    } on SocketException catch (error) {
-      throw FanqieException('无法连接番茄服务器', detail: '$error');
-    }
-    headers.forEach(request.headers.set);
-    HttpClientResponse response;
-    try {
-      response = await request.close().timeout(timeout);
-    } on TimeoutException {
-      throw const FanqieException('番茄服务器响应超时');
-    } on SocketException catch (error) {
-      throw FanqieException('番茄服务器连接中断', detail: '$error');
-    }
-    final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.timeout(timeout)) {
-      bytes.add(chunk);
-      if (bytes.length > 12 * 1024 * 1024) {
-        throw const FanqieException('番茄返回内容异常过大');
+      final request = await _client.getUrl(uri).timeout(timeout);
+      _appHeaders.forEach(request.headers.set);
+      final response = await request.close().timeout(timeout);
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        bytes.addAll(chunk);
+        if (bytes.length > _maxBody) {
+          throw const FanqieException('响应超过 12MB，已中断');
+        }
       }
-    }
-    final body = utf8.decode(bytes.takeBytes(), allowMalformed: true);
-    if (response.statusCode != 200) {
-      throw FanqieException(
-        '番茄服务器返回 ${response.statusCode}',
-        code: response.statusCode,
-      );
-    }
-    Object? decoded;
-    try {
-      decoded = jsonDecode(body);
+      if (bytes.isEmpty) {
+        // 静默拒绝：状态码 200，body 长度 0。参数或签名不对时会出现。
+        throw const FanqieException('番茄返回了空响应，通常是参数或签名不对');
+      }
+      final text = utf8.decode(bytes, allowMalformed: true);
+      if (text.trimLeft().startsWith('<')) {
+        throw const FanqieException('番茄返回了 HTML，可能触发了访问校验');
+      }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) {
+        throw const FanqieException('番茄返回的不是 JSON 对象');
+      }
+      final code = decoded['code'];
+      if (code is int && code != 0) {
+        throw FanqieException(
+          _messageFor(code),
+          code: code,
+          detail: '${decoded['message'] ?? decoded['msg'] ?? ''}',
+        );
+      }
+      final data = decoded['data'];
+      if (data is Map) return Map<String, Object?>.from(data);
+      if (data is List) return {'list': data};
+      return const {};
+    } on SocketException catch (failure) {
+      throw FanqieException('连不上番茄：${failure.message}');
+    } on TimeoutException {
+      throw const FanqieException('番茄响应超时，换个网络再试');
     } on FormatException {
-      // 返回 HTML 通常意味着被风控挡在了网关层。
-      throw FanqieException(
-        '番茄返回了非预期内容，可能触发了访问校验',
-        detail: body.length > 200 ? body.substring(0, 200) : body,
-      );
+      throw const FanqieException('番茄返回的内容不是合法 JSON');
     }
-    if (decoded is! Map<String, Object?>) {
-      throw const FanqieException('番茄返回格式发生变化');
-    }
-    final code = decoded['code'];
-    if (code is int && code != 0) {
-      throw FanqieException(
-        _messageFor(code),
-        code: code,
-        detail: '${decoded['message'] ?? ''}',
-      );
-    }
-    final data = decoded['data'];
-    if (data is Map<String, Object?>) return data;
-    if (data is List) return {'list': data};
-    return const {};
   }
 
-  /// 把服务端 code 翻成人话。未知 code 保留原编号，方便日后比对。
-  String _messageFor(int code) => switch (code) {
-    1001 || 1002 => '番茄要求重新校验设备，请稍后重试',
-    1004 => '登录状态已失效，请重新登录番茄账号',
-    1005 => '该书籍在当前地区不可用',
-    1009 => '访问过于频繁，番茄暂时限制了请求',
-    _ => '番茄接口返回错误码 $code',
+  static String _messageFor(int code) => switch (code) {
+    1004 || 1005 => '登录状态失效，请重新导入 Cookie',
+    1001 => '番茄说这个设备或账号被限制了',
+    1002 => '这一章需要付费',
+    _ => '番茄返回了错误码 $code',
   };
 
-  void close() {
-    _client?.close(force: true);
-    _client = null;
+  /// 从 HTML 里抠出 `window.__INITIAL_STATE__` 这个 JSON 对象。
+  ///
+  /// 不能简单地找第一个 `}`：值里的字符串可能带花括号（比如正文）。
+  /// 这里用括号计数 + 字符串/转义状态机。
+  static Map<String, Object?> _extractInitialState(String html) {
+    const marker = 'window.__INITIAL_STATE__=';
+    final start = html.indexOf(marker);
+    if (start < 0) {
+      throw const FanqieException('页面里没有 __INITIAL_STATE__，番茄可能改版了');
+    }
+    var index = start + marker.length;
+    if (index >= html.length || html[index] != '{') {
+      throw const FanqieException('__INITIAL_STATE__ 后面不是对象，番茄可能改版了');
+    }
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    final buffer = StringBuffer();
+    for (; index < html.length; index += 1) {
+      final ch = html[index];
+      buffer.write(ch);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == r'\') {
+          escaped = true;
+        } else if (ch == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch == '"') {
+        inString = true;
+      } else if (ch == '{') {
+        depth += 1;
+      } else if (ch == '}') {
+        depth -= 1;
+        if (depth == 0) break;
+      }
+    }
+    if (depth != 0) {
+      throw const FanqieException('__INITIAL_STATE__ 的括号没有闭合，页面可能被截断了');
+    }
+    final raw = buffer.toString();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, Object?>.from(decoded);
+      throw const FanqieException('__INITIAL_STATE__ 不是对象');
+    } on FormatException catch (failure) {
+      throw FanqieException('__INITIAL_STATE__ 解析失败', detail: failure.message);
+    }
   }
+
+  void close() => _client.close(force: true);
 }
 
-/// 书籍详情。
+/// 一本书。字段对齐网页版 `page` 对象。
 class FanqieBook {
   const FanqieBook({
-    required this.bookId,
+    required this.id,
     required this.title,
     required this.author,
-    required this.genre,
     required this.summary,
     required this.coverUrl,
-    required this.wordCount,
     required this.chapterCount,
+    required this.wordCount,
     required this.completed,
-    required this.lastUpdate,
+    required this.category,
+    required this.lastChapterTitle,
   });
 
-  final int bookId;
+  final String id;
   final String title;
   final String author;
-  final String genre;
   final String summary;
-  final String? coverUrl;
-  final int wordCount;
+  final String coverUrl;
   final int chapterCount;
+  final int wordCount;
   final bool completed;
-  final String? lastUpdate;
+  final String category;
+  final String lastChapterTitle;
 
-  /// 从 multi-detail 的单条记录解析。
-  ///
-  /// 字段名以线上返回为准，未知字段一律忽略而不是抛错 —— 番茄改字段是常事，
-  /// 多一个少一个不该让整个书库打不开。
   static FanqieBook? fromJson(Object? raw) {
     if (raw is! Map) return null;
-    final id = _asInt(raw['book_id'] ?? raw['bookId']);
-    if (id == null) return null;
+    final id = _string(raw['bookId']);
+    final title = _string(raw['bookName']);
+    if (id == null || title == null) return null;
     return FanqieBook(
-      bookId: id,
-      title: _asString(raw['book_name'] ?? raw['bookName']) ?? '未命名',
-      author: _asString(raw['author'] ?? raw['author_name']) ?? '佚名',
-      genre: _asString(raw['category'] ?? raw['tags']) ?? '',
-      summary: _asString(raw['abstract'] ?? raw['description'] ?? raw['intro']) ?? '',
-      coverUrl: _asString(raw['thumb_url'] ?? raw['cover_url']),
-      wordCount: _asInt(raw['word_number'] ?? raw['word_count']) ?? 0,
-      chapterCount: _asInt(raw['serial_count'] ?? raw['chapter_count']) ?? 0,
-      completed: _asInt(raw['creation_status']) == 1 || raw['is_completed'] == true,
-      lastUpdate: _asString(raw['last_chapter_title'] ?? raw['last_update_time']),
+      id: id,
+      title: title,
+      author: _string(raw['author']) ?? '佚名',
+      summary: _string(raw['abstract']) ?? '',
+      coverUrl: _string(raw['thumbUri']) ?? '',
+      chapterCount: _int(raw['chapterTotal']) ?? 0,
+      wordCount: _int(raw['wordNumber']) ?? 0,
+      // creationStatus: 0 连载中 / 1 已完结（抓到的两本都是 0）。
+      completed: _int(raw['creationStatus']) == 1,
+      category: _string(raw['category']) ?? '',
+      lastChapterTitle: _string(raw['lastChapterTitle']) ?? '',
     );
   }
 }
 
-/// 目录条目。
+/// 目录里的一章。
 class FanqieTocItem {
   const FanqieTocItem({
-    required this.itemId,
+    required this.id,
     required this.title,
-    this.volumeTitle = '',
-    this.index = 0,
+    required this.volume,
+    required this.order,
+    required this.locked,
   });
 
-  final int itemId;
+  final String id;
   final String title;
-  final String volumeTitle;
-  final int index;
+  final String volume;
+  final int order;
+  final bool locked;
 
-  static FanqieTocItem? fromJson(Object? raw) {
+  static FanqieTocItem? fromJson(Object? raw, {String volume = ''}) {
     if (raw is! Map) return null;
-    final id = _asInt(raw['item_id'] ?? raw['itemId']);
-    if (id == null) return null;
+    final id = _string(raw['itemId']);
+    final title = _string(raw['title']);
+    if (id == null || title == null) return null;
     return FanqieTocItem(
-      itemId: id,
-      title: _asString(raw['title']) ?? '无标题',
-      volumeTitle: _asString(raw['volume_name']) ?? '',
-      index: _asInt(raw['index']) ?? 0,
+      id: id,
+      title: title,
+      volume: _string(raw['volume_name']) ?? volume,
+      order: _int(raw['realChapterOrder']) ?? _int(raw['order']) ?? 0,
+      locked: raw['isChapterLock'] == true || _int(raw['needPay']) == 1,
     );
   }
 }
 
-int? _asInt(Object? value) {
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  if (value is String) return int.tryParse(value);
+String? _string(Object? value) {
+  if (value is String) return value.isEmpty ? null : value;
+  if (value is num) return '$value';
   return null;
 }
 
-String? _asString(Object? value) {
-  if (value is String) return value.isEmpty ? null : value;
-  if (value is num) return '$value';
+int? _int(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value);
   return null;
 }

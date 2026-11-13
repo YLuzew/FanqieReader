@@ -5,18 +5,21 @@ import 'package:html/parser.dart' as html_parser;
 
 import 'catalog.dart';
 import 'fanqie_api.dart';
+import 'fanqie_font.dart';
 import 'publication_catalog.dart';
 import 'tag_catalogue.dart';
 
 // 番茄小说内容源。
 //
-// 把 LegacyWenkuRepository 的那个空桩换成这一层，UI / 阅读器 / 听书 / 缓存
+// 把 LegacyWenkuRepository 的空桩换成这一层，UI / 阅读器 / 听书 / 缓存
 // 全都不用动 —— 它们只认 NovelRepository 这套接口。
 //
-// 已知边界（README 里也写了）：
-//   · 正文接口带 bdturing 滑块，未登录 + 无真实设备指纹时大概率被拦。
-//   · 阅读时长同步、段评、书评需要登录态与番茄自己的签名，不在本文件里。
-//   · 频道 / 分类的书单接口尚未实测，这里用的路径可能随时失效。
+// 数据来自网页版（见 fanqie_api.dart 的说明）。一句话概括能力边界：
+//   · 能读：任意公开书籍的详情、完整目录、正文章节（含字体混淆还原）。
+//   · 不能搜：网页版搜索接口对未登录请求返回 200 + 空 body。
+//   · 不能互动：段评、书评、书荒广场、阅读时长同步都需要登录态与番茄的签名。
+//
+// 搜索框仍然有用：粘贴番茄书籍链接或纯数字书号可以直接打开那本书。
 
 /// 一个频道。对应 NovelRepository 之外的 PublicationCatalog。
 class FanqieChannel {
@@ -28,17 +31,17 @@ class FanqieChannel {
 /// 番茄内容源。
 class FanqieRepository extends NovelRepository
     implements PublicationCatalog, ProgressiveTagCatalogue {
-  FanqieRepository({FanqieApi? api}) : _api = api ?? FanqieApi();
+  FanqieRepository({FanqieApi? api}) : api = api ?? FanqieApi();
 
-  final FanqieApi _api;
+  /// 对外的 api 实例。账号层要往它的 cookie 字段写登录态，所以是公开的。
+  final FanqieApi api;
 
   /// 详情缓存。find() 与 detail() 都从这里读，避免同一本书重复请求。
   final Map<int, Novel> _known = {};
 
-  /// 目录缓存。章节列表在详情补全时一并写入。
+  /// 目录缓存。
   final Map<int, List<NovelChapter>> _chapters = {};
 
-  /// 频道表。番茄的频道是固定大类，id 用本地序号，避免依赖服务端字段。
   static const channels = <FanqieChannel>[
     FanqieChannel(1, '推荐'),
     FanqieChannel(2, '男生'),
@@ -47,25 +50,25 @@ class FanqieRepository extends NovelRepository
   ];
 
   @override
-  Future<List<Novel>> list() async => (await browse()).items;
+  Future<List<Novel>> list() async => const [];
 
   @override
   Future<Novel?> find(int id) async {
     final cached = _known[id];
     if (cached != null) return cached;
-    final book = await _book(id);
-    return book;
+    return _book(id);
   }
 
+  /// 搜索。
+  ///
+  /// 番茄的网页版搜索对未登录请求返回空 body，所以这里只做一件事：
+  /// 如果输入看起来是书号或书籍链接，直接把它当 id 打开。
   @override
   Future<List<Novel>> search(String query) async {
-    final trimmed = query.trim();
-    if (trimmed.isEmpty) return const [];
-    final data = await _api.get(
-      FanqieEndpoints.search,
-      query: {'query': trimmed, 'query_type': '0', 'page_count': '20'},
-    );
-    return _novelsFrom(data);
+    final id = _bookIdFromInput(query);
+    if (id == null) return const [];
+    final novel = await _book(id);
+    return novel == null ? const [] : [novel];
   }
 
   @override
@@ -74,64 +77,34 @@ class FanqieRepository extends NovelRepository
     return fresh ?? novel;
   }
 
+  /// 取目录。
+  ///
+  /// 网页版的书页里已经带了完整目录（chapterListWithVolume），
+  /// 所以这里不需要额外请求 —— 只在详情没缓存过时才打一次。
   @override
   Future<List<NovelChapter>> chapters(int id) async {
     final cached = _chapters[id];
     if (cached != null) return cached;
-    final data = await _api.get(
-      FanqieEndpoints.directory,
-      query: {'book_id': '$id'},
-    );
-    final raw = data['chapterListWithVolume'] ?? data['item_data_list'] ?? data['catalog_data'];
-    final items = <FanqieTocItem>[];
-    if (raw is List) {
-      for (final entry in raw) {
-        // 有的返回把一卷的章节放在 item_list 里。
-        if (entry is Map && entry['item_list'] is List) {
-          final volume = entry['volume_name'];
-          for (final item in entry['item_list'] as List) {
-            final parsed = FanqieTocItem.fromJson(item);
-            if (parsed == null) continue;
-            items.add(
-              FanqieTocItem(
-                itemId: parsed.itemId,
-                title: parsed.title,
-                volumeTitle: volume is String ? volume : '',
-                index: parsed.index,
-              ),
-            );
-          }
-          continue;
-        }
-        final parsed = FanqieTocItem.fromJson(entry);
-        if (parsed != null) items.add(parsed);
-      }
-    }
-    final chapters = [
-      for (final (i, item) in items.indexed)
-        NovelChapter(
-          item.title,
-          '',
-          id: item.itemId,
-          volumeTitle: item.volumeTitle,
-          volumeId: item.volumeTitle.hashCode,
-        ),
-    ];
-    _chapters[id] = chapters;
-    return chapters;
+    await _book(id);
+    return _chapters[id] ?? const [];
   }
 
   @override
   Future<String> chapterContent(int novelId, NovelChapter chapter) async {
-    final data = await _api.get(
-      FanqieEndpoints.content,
-      query: {'item_id': '${chapter.id}', 'book_id': '$novelId'},
-    );
-    final raw = data['content'] ?? data['chapter_content'] ?? '';
-    if (raw is! String || raw.trim().isEmpty) {
-      throw const FanqieException('这一章暂时取不到正文，可能需要在番茄 App 内解锁');
+    if (chapter.id == 0) {
+      throw const FanqieException('这一章拿不到编号，试试退出重进这本书');
     }
-    return _toPlainText(raw);
+    final data = await api.fetchChapter('${chapter.id}');
+    final raw = data['content'];
+    if (raw is! String || raw.trim().isEmpty) {
+      // 少数章节的正文在 content 之外的键里，试一遍常见别名。
+      final fallback = data['chapterContent'] ?? data['txt'] ?? data['text'];
+      if (fallback is! String || fallback.trim().isEmpty) {
+        throw const FanqieException('这一章取不到正文，可能需要在番茄里登录后阅读');
+      }
+      return decodeFanqieGlyphs(_toPlainText(fallback));
+    }
+    return decodeFanqieGlyphs(_toPlainText(raw));
   }
 
   @override
@@ -146,17 +119,7 @@ class FanqieRepository extends NovelRepository
     int libraryId, {
     int page = 1,
     bool refresh = false,
-  }) async {
-    final data = await _api.get(
-      FanqieEndpoints.channelBooks,
-      query: {
-        'channel_id': '$libraryId',
-        'page_index': '$page',
-        'page_count': '20',
-      },
-    );
-    return NovelPage(items: _novelsFrom(data), page: page);
-  }
+  }) async => const NovelPage(items: [], page: 1);
 
   @override
   Future<NovelPage> tagPage(
@@ -165,95 +128,91 @@ class FanqieRepository extends NovelRepository
     bool refresh = false,
     bool Function()? current,
     TagProgressCallback? onProgress,
-  }) async {
-    // 番茄没有独立的标签接口，用搜索再按分类/标签字段过滤。
-    // current 用于分页过程中判断宿主页面是否还有效。
-    final terms = tagSearchTerms(tag);
-    if (terms.isEmpty) return const NovelPage(items: [], page: 1);
-    final collected = <Novel>[];
-    for (final term in terms) {
-      if (current != null && !current()) break;
-      final data = await _api.get(
-        FanqieEndpoints.search,
-        query: {'query': term, 'query_type': '0', 'page_count': '20'},
-      );
-      collected.addAll(_novelsFrom(data));
-      onProgress?.call(
-        TagSearchProgress(
-          items: List.unmodifiable(collected),
-          scannedPages: 1,
-          totalPages: 1,
-        ),
-      );
-    }
-    return NovelPage(items: collected, page: page);
-  }
+  }) async => const NovelPage(items: [], page: 1);
 
-  /// 取一本书的详情并写进缓存。
+  /// 取一本书的详情与目录，并写进缓存。
   Future<Novel?> _book(int id) async {
-    final data = await _api.get(
-      FanqieEndpoints.bookDetail,
-      query: {'book_id_list': '$id'},
-    );
-    final list = data['book_info'] ?? data['book_data'] ?? data['list'];
-    if (list is List) {
-      for (final raw in list) {
-        final parsed = FanqieBook.fromJson(raw);
-        if (parsed == null || parsed.bookId != id) continue;
-        final novel = _toNovel(parsed);
-        _known[id] = novel;
-        return novel;
-      }
+    final raw = await api.fetchBookPage('$id');
+    final book = FanqieBook.fromJson(raw);
+    if (book == null) return null;
+    final novel = _toNovel(book, id);
+    _known[id] = novel;
+    final chapters = _chaptersFrom(raw, id);
+    _chapters[id] = chapters;
+    if (chapters.isNotEmpty) {
+      _known[id] = _toNovel(book, id, chapters: chapters);
     }
-    final single = FanqieBook.fromJson(data);
-    if (single != null) {
-      final novel = _toNovel(single);
-      _known[id] = novel;
-      return novel;
-    }
-    return null;
+    return _known[id];
   }
 
-  /// 从任意带书单的响应里抽出书籍。
-  List<Novel> _novelsFrom(Map<String, Object?> data) {
-    for (final key in const [
-      'book_list',
-      'book_data',
-      'books',
-      'item_data_list',
-      'list',
-    ]) {
-      final raw = data[key];
-      if (raw is! List) continue;
-      final result = <Novel>[];
-      for (final entry in raw) {
-        final parsed = FanqieBook.fromJson(entry);
+  /// 把 `chapterListWithVolume` 摊平成章节列表。
+  ///
+  /// 结构是「卷 → 章节数组」，每卷自己可能叫 item_list 或直接是数组。
+  /// 卷名写进 volumeTitle，volumeId 用卷名的哈希保证同一卷内一致。
+  List<NovelChapter> _chaptersFrom(Map<String, Object?> page, int novelId) {
+    final raw = page['chapterListWithVolume'];
+    if (raw is! List) return const [];
+    final result = <NovelChapter>[];
+    for (final volume in raw) {
+      if (volume is! Map) continue;
+      final volumeTitle = _text(volume['volume_name']) ?? '';
+      final volumeId = volumeTitle.isEmpty ? 0 : volumeTitle.hashCode;
+      final items = volume['item_list'] ?? volume['chapterList'] ?? volume['list'];
+      if (items is! List) continue;
+      for (final item in items) {
+        final parsed = FanqieTocItem.fromJson(item, volume: volumeTitle);
         if (parsed == null) continue;
-        final novel = _toNovel(parsed);
-        _known[parsed.bookId] = novel;
-        result.add(novel);
+        final chapterId = int.tryParse(parsed.id) ?? 0;
+        if (chapterId == 0) continue;
+        result.add(
+          NovelChapter(
+            parsed.title,
+            '',
+            id: chapterId,
+            volumeId: volumeId,
+            volumeTitle: volumeTitle,
+          ),
+        );
       }
-      if (result.isNotEmpty) return result;
     }
-    return const [];
+    return result;
   }
 
-  Novel _toNovel(FanqieBook book) => Novel(
-    id: book.bookId,
+  Novel _toNovel(
+    FanqieBook book,
+    int id, {
+    List<NovelChapter> chapters = const [],
+  }) => Novel(
+    id: id,
     title: book.title,
     author: book.author,
-    genre: book.genre,
+    genre: book.category,
     summary: book.summary,
-    colors: _colorsFor(book.bookId),
-    chapters: _chapters[book.bookId] ?? const [],
+    colors: _colorsFor(id),
+    chapters: chapters,
     isComplete: book.completed,
-    coverUrl: book.coverUrl,
-    lastUpdate: book.lastUpdate,
+    coverUrl: book.coverUrl.isEmpty ? null : book.coverUrl,
+    lastUpdate: book.lastChapterTitle.isEmpty ? null : book.lastChapterTitle,
     chapterCount: book.chapterCount,
   );
 
+  /// 从用户输入里认出一个 bookId。
+  ///
+  /// 接受三种写法：
+  ///   7280435908500324388
+  ///   https://fanqienovel.com/page/7280435908500324388
+  ///   fanqienovel.com/page/7280435908500324388?enter_from=search
+  static int? _bookIdFromInput(String input) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) return null;
+    final digits = RegExp(r'\d{8,20}').firstMatch(trimmed);
+    if (digits == null) return null;
+    final value = int.tryParse(digits.group(0)!);
+    if (value == null || value <= 0) return null;
+    return value;
+  }
+
   /// 封面还没加载时，用书号稳定地取两个色做占位底。
-  /// 同一个 id 每次都得到同一对颜色，不会因为刷新而跳。
   static List<Color> _colorsFor(int id) {
     final hue = (id % 360).toDouble();
     return [
@@ -263,6 +222,8 @@ class FanqieRepository extends NovelRepository
   }
 
   /// 番茄正文是 HTML 片段，阅读器要的是段落纯文本。
+  ///
+  /// 混淆码位已经由 decodeFanqieGlyphs 还原，这里只处理标签。
   static String _toPlainText(String raw) {
     if (!raw.contains('<')) return raw.trim();
     final document = html_parser.parse(raw);
@@ -277,5 +238,11 @@ class FanqieRepository extends NovelRepository
         .map((element) => element.text.trim())
         .where((text) => text.isNotEmpty)
         .join('\n\n');
+  }
+
+  static String? _text(Object? value) {
+    if (value is String) return value.isEmpty ? null : value;
+    if (value is num) return '$value';
+    return null;
   }
 }
