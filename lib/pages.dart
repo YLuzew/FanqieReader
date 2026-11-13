@@ -1328,16 +1328,13 @@ class DiscoverPage extends StatelessWidget {
         categoryKey: const ValueKey('discover-category'),
         filterKey: const ValueKey('discover-filter'),
         viewKey: const ValueKey('discover-view'),
+        // 番茄没有「榜单 / 标签 / 出版文库 / 屏蔽」这一套（那是文库的体系）。
+        // 发现页走的又是推荐流，服务端没有排序参数，所以这两个入口点了
+        // 只会弹一个全空的面板 —— 直接关掉，不留假按钮。
         onCategory: onChooseCategory != null
             ? () => onChooseCategory!(context)
-            : feed == null
-            ? null
-            : () => _chooseSort(context),
-        onFilter: onChooseCategory != null
-            ? () => onChooseCategory!(context)
-            : feed == null
-            ? null
-            : () => _chooseSort(context),
+            : null,
+        onFilter: null,
         onView: () => _chooseView(context),
         loading: feed?.loading == true && feed?.hasLoaded != true,
       );

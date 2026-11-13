@@ -34,6 +34,7 @@
             android:name=".FanqieLoginActivity"
             android:exported="false"
             android:label="登录番茄"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:windowSoftInputMode="adjustResize" />
         <activity

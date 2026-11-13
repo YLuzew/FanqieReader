@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -125,16 +126,25 @@ class FanqieLoginPlugin :
 class FanqieLoginActivity : Activity() {
 
     private lateinit var web: WebView
+    private var handled = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 之前这页被系统 ActionBar 压了一条黑色标题栏在头顶，番茄网页自己的
+        // 登录按钮正好躲在它下面，点不到。这里去掉 ActionBar（见 manifest 的
+        // theme），状态栏改浅色、图标反过来。
+        window.statusBarColor = Color.WHITE
+        window.navigationBarColor = Color.WHITE
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility =
+            window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+
+        val probe = WebView(this)
+        web = probe
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(
-            WebView(this).also { web = it },
-            true,
-        )
+        CookieManager.getInstance().setAcceptThirdPartyCookies(probe, true)
 
         web.settings.apply {
             javaScriptEnabled = true
@@ -144,34 +154,50 @@ class FanqieLoginActivity : Activity() {
                 "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
                     "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
         }
-        web.webViewClient = WebViewClient()
+        // 用户登完番茄会跳一次页，sessionid 就是在这之后落进 CookieManager 的。
+        // 与其让他去找「完成」，不如每次页面加载完自己探一眼。
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (!handled && readCookie().contains("sessionid=")) {
+                    handled = true
+                    view?.postDelayed({ finishWithCookie() }, 600)
+                }
+            }
+        }
         web.loadUrl(START_URL)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            fitsSystemWindows = true
             setBackgroundColor(Color.WHITE)
         }
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(32, 24, 32, 24)
-            setBackgroundColor(Color.parseColor("#F6F6F6"))
+            setPadding(dp(14), dp(6), dp(8), dp(6))
+            setBackgroundColor(Color.parseColor("#F7F7F7"))
         }
-        val hint = TextView(this).apply {
-            text = "登录番茄后点右上角「完成」"
-            textSize = 14f
-            setTextColor(Color.parseColor("#666666"))
-        }
-        val hintParams = LinearLayout.LayoutParams(
-            0,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+        bar.addView(
+            TextView(this).apply {
+                text = "在下面登录番茄，登完自动返回"
+                textSize = 13f
+                setTextColor(Color.parseColor("#666666"))
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { weight = 1f },
         )
-        hintParams.weight = 1f
-        bar.addView(hint, hintParams)
         bar.addView(
             Button(this).apply {
                 text = "完成"
+                isAllCaps = false
+                textSize = 13f
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(dp(16), dp(6), dp(16), dp(6))
                 setOnClickListener { finishWithCookie() }
             },
             LinearLayout.LayoutParams(
@@ -179,9 +205,13 @@ class FanqieLoginActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        root.addView(bar)
-        // 第三个参数是 weight，但 LinearLayout.LayoutParams 的三参构造在
-        // 部分 compileSdk 下会解析到别的重载，直接赋属性最稳。
+        root.addView(
+            bar,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         val webParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
@@ -191,14 +221,28 @@ class FanqieLoginActivity : Activity() {
         setContentView(root)
     }
 
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun readCookie(): String =
+        try {
+            CookieManager.getInstance().getCookie(COOKIE_URL) ?: ""
+        } catch (e: Throwable) {
+            ""
+        }
+
     private fun finishWithCookie() {
         CookieManager.getInstance().flush()
-        val cookie = CookieManager.getInstance().getCookie(COOKIE_URL) ?: ""
-        setResult(RESULT_OK, Intent().putExtra(EXTRA_COOKIE, cookie))
+        setResult(RESULT_OK, Intent().putExtra(EXTRA_COOKIE, readCookie()))
         finish()
     }
 
+    // 用户很自然就是按返回键回来 —— 以前这里只做网页后退，cookie 直接丢了，
+    // 所以显示「登了还是没登录」。有会话就带回去。
     override fun onBackPressed() {
+        if (readCookie().contains("sessionid=")) {
+            finishWithCookie()
+            return
+        }
         if (::web.isInitialized && web.canGoBack()) {
             web.goBack()
             return
@@ -209,14 +253,9 @@ class FanqieLoginActivity : Activity() {
 
     override fun onDestroy() {
         if (::web.isInitialized) {
+            web.stopLoading()
             web.destroy()
         }
         super.onDestroy()
-    }
-
-    companion object {
-        const val EXTRA_COOKIE = "cookie"
-        private const val COOKIE_URL = "https://fanqienovel.com"
-        private const val START_URL = "https://fanqienovel.com/"
     }
 }
