@@ -74,6 +74,7 @@ class FanqieAccount extends WenkuAccount {
   /// HttpOnly，网页里的 JS 读不到。所以真正能走通的就是这条：
   /// 用户自己在番茄页面登，登完由 `CookieManager` 把 HttpOnly 的 cookie
   /// 一起读回来。用户取消登录就静默返回，不当错误。
+  @override
   Future<void> loginInWebView() async {
     if (busy) return;
     // 这一步只在等用户操作，不占用 busy —— importCookie 会自己接管状态。

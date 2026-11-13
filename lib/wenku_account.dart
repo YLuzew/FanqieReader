@@ -62,6 +62,9 @@ class WenkuAccount extends ChangeNotifier {
   }
 
   Future<void> login(String username, String password) => _unavailable();
+  /// 走宿主自带的登录页（WebView 之类）登录，而不是拿账号密码去换。
+  /// 默认实现退回 [login]，没有原生登录页的账号实现不受影响。
+  Future<void> loginInWebView() => login('', '');
   Future<void> connectPublications(String password) => _unavailable();
   Future<void> refreshProfile() => _unavailable();
   Future<void> signIn() => _unavailable();
