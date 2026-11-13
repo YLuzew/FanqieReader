@@ -142,7 +142,7 @@ class FanqieSession {
 class FanqieApi {
   FanqieApi({FanqieSession? session, Duration? timeout})
     : session = session ?? FanqieSession(),
-      timeout = timeout ?? const Duration(seconds: 20),
+      timeout = timeout ?? const Duration(seconds: 35),
       _client = HttpClient() {
     _client.userAgent = FanqieEndpoints.userAgent;
     _client.connectionTimeout = this.timeout;
@@ -342,6 +342,9 @@ class FanqieApi {
         throw const FanqieException('正文响应超过 12MB，已中断');
       }
     }
+    if (response.statusCode != 200) {
+      throw FanqieException('App 接口 HTTP ${response.statusCode}');
+    }
     if (bytes.isEmpty) {
       throw const FanqieException('正文接口返回空响应，签名可能没对');
     }
@@ -385,15 +388,32 @@ class FanqieApi {
   Future<Map<String, Object?>> fetchChapter(String itemId) async {
     // 先试 App 网关。它没有 10 章限制，但要多两步：签名 + 解密。
     // 任何一步失败都当作"这条路不通"，回落到网页版，而不是把整本书卡死。
+    // App 网关失败的原始原因。网页版也失败时一起报出来 —— 只显示
+    // 「要付费或要登录」会把人引到错的方向，真正的原因可能在签名那一步。
+    String appFailure = '没走到 App 网关';
     try {
       final viaApp = await _fetchChapterViaApp(itemId);
       if (viaApp != null) return viaApp;
-    } on FanqieException {
-      // 签名/解密失败不该盖住网页版能给的那 10 章。
-    } catch (_) {
-      // 网络层异常同理。
+      appFailure = 'App 网关没返回正文';
+    } catch (error) {
+      // 签名/解密失败不该盖住网页版能给的那 10 章，但要留下记录。
+      appFailure = '$error';
+      stderr.writeln('[fanqie] App 网关失败: $error');
     }
 
+    try {
+      return await _fetchChapterViaWeb(itemId);
+    } on FanqieException catch (error) {
+      throw FanqieException(
+        error.message,
+        code: error.code,
+        detail: 'App 网关：$appFailure',
+      );
+    }
+  }
+
+  /// 网页版正文，只有前 10 章可用。
+  Future<Map<String, Object?>> _fetchChapterViaWeb(String itemId) async {
     final html = await _fetchHtml(
       Uri.https(
         FanqieEndpoints.webHost,

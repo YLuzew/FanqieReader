@@ -34,6 +34,15 @@ class ChapterDownload {
   int illustrations = 0;
   bool cachingIllustrations = false;
   String? failedChapter;
+
+  /// 失败原因，直接拼进提示里。不这么做的话用户只看到「缓存失败」，
+  /// 分不清是没网、章节锁了、还是签名被拒。
+  String get _reason {
+    final raw = error?.toString();
+    if (raw == null || raw.isEmpty) return '';
+    final oneLine = raw.replaceAll('\n', ' ').trim();
+    return '（${oneLine.length > 60 ? '${oneLine.substring(0, 60)}…' : oneLine}）';
+  }
   Object? error;
 
   bool get active => switch (phase) {
@@ -54,10 +63,10 @@ class ChapterDownload {
     DownloadPhase.cancelled => '已取消 · 保留已缓存章节',
     DownloadPhase.failed =>
       failedChapter == null
-          ? '获取目录失败，可重试'
+          ? '获取目录失败，可重试${_reason}'
           : cachingIllustrations
-          ? '「$failedChapter」插图未缓存完成，可继续缓存'
-          : '「$failedChapter」缓存失败，可重试',
+          ? '「$failedChapter」插图未缓存完成，可继续缓存${_reason}'
+          : '「$failedChapter」缓存失败，可重试${_reason}',
   };
 }
 
