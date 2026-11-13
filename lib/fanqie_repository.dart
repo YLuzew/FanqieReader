@@ -6,6 +6,7 @@ import 'package:html/parser.dart' as html_parser;
 import 'catalog.dart';
 import 'fanqie_api.dart';
 import 'fanqie_font.dart';
+import 'fanqie_ids.dart';
 import 'publication_catalog.dart';
 import 'tag_catalogue.dart';
 
@@ -31,10 +32,18 @@ class FanqieChannel {
 /// 番茄内容源。
 class FanqieRepository extends NovelRepository
     implements PublicationCatalog, ProgressiveTagCatalogue {
-  FanqieRepository({FanqieApi? api}) : api = api ?? FanqieApi();
+  FanqieRepository({FanqieApi? api, FanqieIdMap? ids})
+    : api = api ?? FanqieApi(),
+      ids = ids ?? FanqieIdMap();
 
   /// 对外的 api 实例。账号层要往它的 cookie 字段写登录态，所以是公开的。
   final FanqieApi api;
+
+  /// 远程 bookId ↔ 本地标识的映射。
+  ///
+  /// 番茄的 bookId 有 19 位，直接当 Novel.id 会被上游的 isLocalBook 当成
+  /// 「没导入的本地书」而全线报错，细节见 fanqie_ids.dart。
+  final FanqieIdMap ids;
 
   /// 详情缓存。find() 与 detail() 都从这里读，避免同一本书重复请求。
   final Map<int, Novel> _known = {};
@@ -65,9 +74,11 @@ class FanqieRepository extends NovelRepository
   /// 如果输入看起来是书号或书籍链接，直接把它当 id 打开。
   @override
   Future<List<Novel>> search(String query) async {
-    final id = _bookIdFromInput(query);
-    if (id == null) return const [];
-    final novel = await _book(id);
+    final remote = _bookIdFromInput(query);
+    if (remote == null) return const [];
+    final key = '$remote';
+    final localId = await ids.localIdFor(key);
+    final novel = await _fetch(key, localId);
     return novel == null ? const [] : [novel];
   }
 
@@ -130,19 +141,33 @@ class FanqieRepository extends NovelRepository
     TagProgressCallback? onProgress,
   }) async => const NovelPage(items: [], page: 1);
 
-  /// 取一本书的详情与目录，并写进缓存。
+  /// 按本地标识取一本书的详情与目录，并写进缓存。
+  ///
+  /// 传进来的 `id` 是 Novel.id（本地标识），不是番茄的 bookId —— 两者的
+  /// 区别见 fanqie_ids.dart。
   Future<Novel?> _book(int id) async {
-    final raw = await api.fetchBookPage('$id');
+    final remote = ids.remoteIdFor(id);
+    if (remote == null) {
+      // 没有映射：要么是上一版直接把原始 bookId 塞进 Novel.id 留下的旧记录，
+      // 要么这个 id 根本不是番茄的书。按原始 id 试一次，不额外分配。
+      return _fetch('$id', id);
+    }
+    return _fetch(remote, id);
+  }
+
+  /// 真正去抓书页并组装 Novel。
+  Future<Novel?> _fetch(String remoteId, int localId) async {
+    final raw = await api.fetchBookPage(remoteId);
     final book = FanqieBook.fromJson(raw);
     if (book == null) return null;
-    final novel = _toNovel(book, id);
-    _known[id] = novel;
-    final chapters = _chaptersFrom(raw, id);
-    _chapters[id] = chapters;
+    final novel = _toNovel(book, localId);
+    _known[localId] = novel;
+    final chapters = _chaptersFrom(raw, localId);
+    _chapters[localId] = chapters;
     if (chapters.isNotEmpty) {
-      _known[id] = _toNovel(book, id, chapters: chapters);
+      _known[localId] = _toNovel(book, localId, chapters: chapters);
     }
-    return _known[id];
+    return _known[localId];
   }
 
   /// 把 `chapterListWithVolume` 摊平成章节列表。
@@ -153,26 +178,39 @@ class FanqieRepository extends NovelRepository
     final raw = page['chapterListWithVolume'];
     if (raw is! List) return const [];
     final result = <NovelChapter>[];
-    for (final volume in raw) {
-      if (volume is! Map) continue;
-      final volumeTitle = _text(volume['volume_name']) ?? '';
-      final volumeId = volumeTitle.isEmpty ? 0 : volumeTitle.hashCode;
-      final items = volume['item_list'] ?? volume['chapterList'] ?? volume['list'];
-      if (items is! List) continue;
+
+    // 番茄的 chapterListWithVolume 有两种形态，都要认：
+    //   1) List<List<章节>>                     —— 2026-11-13 实测，卷名挂在每章的
+    //                                              volume_name 上，外层只是分组
+    //   2) List<{volume_name, item_list}>       —— 老版/别的入口的写法
+    // 之前只认第二种，导致整本目录被当成「不是 Map」全部跳过、目录永远是空的。
+    void take(List<Object?> items, String fallbackVolume) {
       for (final item in items) {
-        final parsed = FanqieTocItem.fromJson(item, volume: volumeTitle);
+        final parsed = FanqieTocItem.fromJson(item, volume: fallbackVolume);
         if (parsed == null) continue;
         final chapterId = int.tryParse(parsed.id) ?? 0;
         if (chapterId == 0) continue;
+        final title = parsed.volume.isEmpty ? fallbackVolume : parsed.volume;
         result.add(
           NovelChapter(
             parsed.title,
             '',
             id: chapterId,
-            volumeId: volumeId,
-            volumeTitle: volumeTitle,
+            volumeId: title.isEmpty ? 0 : title.hashCode,
+            volumeTitle: title,
           ),
         );
+      }
+    }
+
+    for (final volume in raw) {
+      if (volume is List) {
+        take(volume, '');
+      } else if (volume is Map) {
+        final volumeTitle = _text(volume['volume_name']) ?? '';
+        final items =
+            volume['item_list'] ?? volume['chapterList'] ?? volume['list'];
+        if (items is List) take(items, volumeTitle);
       }
     }
     return result;

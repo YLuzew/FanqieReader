@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 // 番茄小说的传输层。
 //
@@ -187,6 +188,39 @@ class FanqieApi {
       throw const FanqieException('这一章在番茄上要付费或要登录才能看');
     }
     return data;
+  }
+
+  /// 取封面图。
+  ///
+  /// 番茄的封面是签名 URL（byteimg 的 CDN），直接 GET 就行，不需要 cookie
+  /// 也不需要 Referer。任何失败都返回 null —— 封面加载不出来不该让整页报错。
+  Future<Uint8List?> fetchCoverBytes(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) return null;
+    try {
+      final request = await _client.getUrl(uri).timeout(timeout);
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        FanqieEndpoints.userAgent,
+      );
+      final response = await request.close().timeout(timeout);
+      if (response.statusCode != HttpStatus.ok) {
+        await response.drain<void>();
+        return null;
+      }
+      final collector = BytesBuilder(copy: false);
+      var total = 0;
+      await for (final chunk in response) {
+        total += chunk.length;
+        // 封面不该有这么大，超过就是出了别的问题。
+        if (total > 4 * 1024 * 1024) return null;
+        collector.add(chunk);
+      }
+      final bytes = collector.takeBytes();
+      return bytes.isEmpty ? null : bytes;
+    } on Exception {
+      return null;
+    }
   }
 
   /// 取一段网页 HTML。

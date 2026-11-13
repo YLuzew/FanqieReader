@@ -15,6 +15,7 @@ import 'catalog.dart';
 import 'fanqie_account.dart';
 import 'fanqie_api.dart';
 import 'fanqie_repository.dart';
+import 'legacy_cover.dart';
 import 'legacy_wenku_repository.dart';
 import 'library_state.dart';
 import 'local_platform.dart';
@@ -84,6 +85,9 @@ Future<void> main() async {
   SystemChrome.setSystemUIOverlayStyle(novelSystemUiStyle(brightness));
   // 内容源与账号共用同一条番茄连接：登录态 Cookie 写进 api，Repository 立刻能看到。
   final fanqieApi = FanqieApi();
+  // 上游把封面取图留成了空桩（LegacyCover 只会 local seed）。这里把真正的
+  // 取图实现挂上去，封面才会从 CDN 拉；不挂就还是原来的「无封面」表现。
+  LegacyCover.coverLoader = fanqieApi.fetchCoverBytes;
   final WenkuAccount? account = LocalPlatform.fileActions
       ? FanqieAccount(api: fanqieApi)
       : null;

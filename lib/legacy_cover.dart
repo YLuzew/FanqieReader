@@ -5,9 +5,30 @@ import 'online_component.dart';
 
 /// Bounded cover cache. Source previews use local seeds only.
 abstract final class LegacyCover {
-  static final _cache = LegacyCoverCache(request: (_) => unavailableOnline());
-  static Uint8List? peek(int aid, {String? url}) => _cache.peek(aid);
-  static Future<Uint8List> bytes(int aid, {String? url}) => _cache.load(aid);
+  /// 记住每个 aid 对应的封面地址，供 [coverLoader] 去取。
+  static final _urls = <int, String>{};
+
+  /// 愿意真的联网取封面的一方挂到这里；不挂就保持原来的「无封面」行为。
+  static Future<Uint8List?> Function(String url)? coverLoader;
+
+  static final _cache = LegacyCoverCache(request: _request);
+
+  static Future<Uint8List?> _request(int aid) async {
+    final loader = coverLoader;
+    final url = _urls[aid];
+    if (loader == null || url == null || url.isEmpty) return null;
+    return loader(url);
+  }
+
+  static Uint8List? peek(int aid, {String? url}) {
+    if (url != null && url.isNotEmpty) _urls[aid] = url;
+    return _cache.peek(aid);
+  }
+
+  static Future<Uint8List> bytes(int aid, {String? url}) {
+    if (url != null && url.isNotEmpty) _urls[aid] = url;
+    return _cache.load(aid);
+  }
 
   /// Explicit local fixtures never query a remote cover endpoint.
   static void seedLocalBytes(int aid, Uint8List bytes) =>
