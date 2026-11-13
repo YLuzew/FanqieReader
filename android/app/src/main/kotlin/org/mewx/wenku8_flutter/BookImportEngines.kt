@@ -46,7 +46,8 @@ internal class BookFolderScanner(@Suppress("UNUSED_PARAMETER") private val activ
 internal class BookArchiveImport(val root: File) {
     var documents: BookMarkupImport? = null
 
-    fun prepare(name: String, source: BookDocumentInput): Map<String, Any?> =
+    // 调用点传进来的是 bookTextFile() 的结果，类型是 File（BookDocuments.kt:201）。
+    fun prepare(name: String, source: File): Map<String, Any?> =
         throw IllegalStateException("此构建未包含电子书解析引擎")
 
     companion object {
