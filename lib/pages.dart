@@ -1358,7 +1358,7 @@ class DiscoverPage extends StatelessWidget {
     // 的分类体系。番茄只有分类、排序、状态、细分标签四个维度，而且挂在
     // 分类落地页上。所以这里换成它自己的面板，别弹一个点不动的空壳。
     if (fanqieRepositoryOf(repository) case final fanqie?) {
-      final choice = await showFanqieFilterSheet(context, fanqie);
+      final choice = await showFanqieFilterSheet(context, fanqie, reduceMotion: state.reduceMotion);
       if (choice == null || !context.mounted) return;
       fanqie.applyFilter(
         categoryId: choice.categoryId,

@@ -1,11 +1,14 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'app_language.dart';
+import 'app_ui.dart';
 import 'archive_design.dart';
 import 'fanqie_api.dart';
 import 'fanqie_repository.dart';
+import 'glass_choices.dart';
 
 /// 用户在发现页选完的一组番茄筛选条件。
 class FanqieFilterSelection {
@@ -30,24 +33,20 @@ class FanqieFilterSelection {
 
 Future<FanqieFilterSelection?> showFanqieFilterSheet(
   BuildContext context,
-  FanqieRepository repository,
-) => showModalBottomSheet<FanqieFilterSelection>(
+  FanqieRepository repository, {
+  bool reduceMotion = false,
+}) => showJellySheet<FanqieFilterSelection>(
   context: context,
-  isScrollControlled: true,
-  showDragHandle: false,
-  backgroundColor: Theme.of(context).colorScheme.surface,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-  ),
+  reduceMotion: reduceMotion,
+  heightFactor: .75,
   builder: (_) => FanqieFilterSheet(repository: repository),
 );
 
 /// 番茄自己的筛选面板。
 ///
-/// 文库那套「榜单 / 标签 / 出版文库 / 屏蔽」在番茄这边没有对应物 ——
-/// 番茄给的是排序（sort_by）、状态（book_status）、细分标签（sub_category），
-/// 另外还有一组字数（word_type）暂时没接。这些只挂在分类落地页上，所以这里照着番茄的真实
-/// 参数重做，不硬套文库的分类体系。
+/// 文库那套「榜单 / 标签 / 出版文库 / 屏蔽」在番茄这边没有对应物 —— 番茄给的
+/// 是排序（sort_by）、状态（book_status）、细分标签（sub_category），另外还有
+/// 一组字数（word_type）暂时没接。这些只挂在分类落地页上，所以照着真实参数重做。
 class FanqieFilterSheet extends StatefulWidget {
   const FanqieFilterSheet({super.key, required this.repository});
 
@@ -118,10 +117,7 @@ class _FanqieFilterSheetState extends State<FanqieFilterSheet> {
     return [
       for (final item in raw)
         if (item is Map)
-          (
-            value: '${item['value'] ?? ''}',
-            label: '${item['name'] ?? ''}',
-          ),
+          (value: '${item['value'] ?? ''}', label: '${item['name'] ?? ''}'),
     ].where((e) => e.value.isNotEmpty).toList(growable: false);
   }
 
@@ -131,289 +127,130 @@ class _FanqieFilterSheetState extends State<FanqieFilterSheet> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final maxHeight = MediaQuery.sizeOf(context).height * .84;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxHeight),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 拖动条自己画 —— 系统那条是圆头浅灰，和这套方角档案线不搭。
-          Center(
-            child: Container(
-              width: 34,
-              height: 3,
-              margin: const EdgeInsets.only(top: 8, bottom: 12),
-              color: scheme.outlineVariant,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 10, 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const ArchiveCode('FILTER / COLLECTION'),
-                const SizedBox(height: 6),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: AppText(
-                        _categoryName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          height: 1.2,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -.6,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(
-                        context,
-                        FanqieFilterSelection(
-                          categoryId: _categoryId,
-                          categoryName: _categoryName,
-                          sortBy: '0',
-                          bookStatus: '2',
-                          subCategory: '0',
-                          active: false,
-                        ),
-                      ),
-                      style: TextButton.styleFrom(
-                        foregroundColor: scheme.onSurfaceVariant,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        minimumSize: const Size(0, 34),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text('重置', style: TextStyle(fontSize: 13)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Divider(height: .8, thickness: .8, color: scheme.outlineVariant),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                : _error != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AppText(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 13,
-                              height: 1.6,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          _ArchiveChip(label: '重试', onTap: _load),
-                        ],
-                      ),
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
-                    children: [
-                      const _ArchiveGroup(code: 'FILTER / CATEGORY', title: '分类'),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final category in _categories)
-                            _ArchiveChip(
-                              label: category.name,
-                              selected: category.id == _categoryId,
-                              onTap: () => _pickCategory(category),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      const _ArchiveGroup(code: 'FILTER / SORT', title: '排序'),
-                      _Chips(
-                        options: _options('sort_by'),
-                        selected: _sortBy,
-                        onPick: (v) => setState(() => _sortBy = v),
-                      ),
-                      const SizedBox(height: 24),
-                      const _ArchiveGroup(code: 'FILTER / STATUS', title: '状态'),
-                      _Chips(
-                        options: _options('book_status'),
-                        selected: _bookStatus,
-                        onPick: (v) => setState(() => _bookStatus = v),
-                      ),
-                      if (_options('sub_category').length > 1) ...[
-                        const SizedBox(height: 24),
-                        const _ArchiveGroup(code: 'FILTER / TAG', title: '标签'),
-                        _Chips(
-                          options: _options('sub_category'),
-                          selected: _subCategory,
-                          onPick: (v) => setState(() => _subCategory = v),
-                        ),
-                      ],
-                      const SizedBox(height: 30),
-                      _ArchiveChip(
-                        label: '应用',
-                        filled: true,
-                        onTap: () => Navigator.pop(
-                          context,
-                          FanqieFilterSelection(
-                            categoryId: _categoryId,
-                            categoryName: _categoryName,
-                            sortBy: _sortBy,
-                            bookStatus: _bookStatus,
-                            subCategory: _subCategory,
-                            active: _active || _categoryId != 1,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 分组标题：等宽小字 + 细线 + 右端一个小方块，跟发现页那套档案头一致。
-class _ArchiveGroup extends StatelessWidget {
-  const _ArchiveGroup({required this.code, required this.title});
-  final String code;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ArchiveCode(code),
-              const SizedBox(width: 9),
               Expanded(
-                child: Divider(
-                  height: 1,
-                  thickness: .6,
-                  color: scheme.outlineVariant,
+                child: ArchiveSection(
+                  title: '筛选',
+                  code: 'DISCOVER / TOMATO',
+                  subtitle: _categoryName,
                 ),
               ),
-              const SizedBox(width: 5),
-              SizedBox(
-                width: 3,
-                height: 3,
-                child: ColoredBox(color: scheme.onSurface),
+              GlassTextButton(
+                key: const ValueKey('fanqie-filter-reset'),
+                compact: true,
+                onPressed: () => Navigator.pop(
+                  context,
+                  FanqieFilterSelection(
+                    categoryId: _categoryId,
+                    categoryName: _categoryName,
+                    sortBy: '0',
+                    bookStatus: '2',
+                    subCategory: '0',
+                    active: false,
+                  ),
+                ),
+                child: const AppText('重置'),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          AppText(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              height: 1.2,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -.2,
+          const SizedBox(height: 10),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(child: CupertinoActivityIndicator()),
+            )
+          else if (_error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 28),
+              child: Column(
+                children: [
+                  AppText(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.6,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  GlassTextButton(
+                    key: const ValueKey('fanqie-filter-retry'),
+                    compact: true,
+                    onPressed: _load,
+                    child: const AppText('重新加载'),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            GlassChoiceGroup<int>(
+              name: 'fanqie-filter-category',
+              label: '分类',
+              value: _categoryId,
+              columns: 3,
+              options: {for (final c in _categories) c.id: c.name},
+              optionName: (id) => '$id',
+              onChanged: (id) {
+                final picked = _categories.where((e) => e.id == id);
+                if (picked.isNotEmpty) unawaited(_pickCategory(picked.first));
+              },
             ),
-          ),
+            GlassChoiceGroup<String>(
+              name: 'fanqie-filter-sort',
+              label: '排序',
+              value: _sortBy,
+              columns: 4,
+              options: {for (final o in _options('sort_by')) o.value: o.label},
+              onChanged: (v) => setState(() => _sortBy = v),
+            ),
+            GlassChoiceGroup<String>(
+              name: 'fanqie-filter-status',
+              label: '状态',
+              value: _bookStatus,
+              columns: 4,
+              options: {
+                for (final o in _options('book_status')) o.value: o.label,
+              },
+              onChanged: (v) => setState(() => _bookStatus = v),
+            ),
+            if (_options('sub_category').length > 1)
+              GlassChoiceGroup<String>(
+                name: 'fanqie-filter-tag',
+                label: '标签',
+                value: _subCategory,
+                columns: 3,
+                options: {
+                  for (final o in _options('sub_category')) o.value: o.label,
+                },
+                onChanged: (v) => setState(() => _subCategory = v),
+              ),
+            const SizedBox(height: 20),
+            GlassTextButton(
+              key: const ValueKey('fanqie-filter-apply'),
+              onPressed: () => Navigator.pop(
+                context,
+                FanqieFilterSelection(
+                  categoryId: _categoryId,
+                  categoryName: _categoryName,
+                  sortBy: _sortBy,
+                  bookStatus: _bookStatus,
+                  subCategory: _subCategory,
+                  active: _active || _categoryId != 1,
+                ),
+              ),
+              child: const Center(child: AppText('应用')),
+            ),
+          ],
         ],
       ),
     );
   }
-}
-
-/// 方角细描边选择块 —— Material 那个圆头 ChoiceChip 和这套版式不是一路。
-/// 选中时反色（黑底白字），跟发现页的书脊编号是同一个语汇。
-class _ArchiveChip extends StatelessWidget {
-  const _ArchiveChip({
-    required this.label,
-    this.selected = false,
-    this.filled = false,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-
-  /// 「应用」那种主按钮：整块实心，比普通选项厚一点。
-  final bool filled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final solid = selected || filled;
-    final radius = BorderRadius.circular(3);
-    return Material(
-      color: solid ? scheme.onSurface : Colors.transparent,
-      borderRadius: radius,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: radius,
-        child: Container(
-          width: filled ? double.infinity : null,
-          padding: EdgeInsets.symmetric(
-            horizontal: filled ? 16 : 13,
-            vertical: filled ? 14 : 8,
-          ),
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: solid ? scheme.onSurface : scheme.outlineVariant,
-              width: .8,
-            ),
-            borderRadius: radius,
-          ),
-          child: AppText(
-            label,
-            textAlign: filled ? TextAlign.center : null,
-            style: TextStyle(
-              fontSize: filled ? 14 : 13,
-              height: 1.15,
-              letterSpacing: filled ? 1.6 : .2,
-              fontWeight: solid ? FontWeight.w600 : FontWeight.w400,
-              color: solid ? scheme.surface : scheme.onSurface,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Chips extends StatelessWidget {
-  const _Chips({
-    required this.options,
-    required this.selected,
-    required this.onPick,
-  });
-
-  final List<({String value, String label})> options;
-  final String selected;
-  final ValueChanged<String> onPick;
-
-  @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 8,
-    runSpacing: 8,
-    children: [
-      for (final option in options)
-        _ArchiveChip(
-          label: option.label,
-          selected: option.value == selected,
-          onTap: () => onPick(option.value),
-        ),
-    ],
-  );
 }
