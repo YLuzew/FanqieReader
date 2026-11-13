@@ -1331,7 +1331,18 @@ class DiscoverPage extends StatelessWidget {
           : feed?.sort.label) ??
       '最近更新';
 
-  Widget _categoryHeader(BuildContext context, {int? count}) =>
+  Widget _categoryHeader(BuildContext context, {int? count}) {
+    final fanqie = fanqieRepositoryOf(repository);
+    if (fanqie == null) return _buildCategoryToolbar(context, count);
+    // 这是个 StatelessWidget，筛完改的是 repository 上的字段 —— 不挂个监听
+    // 顶栏那行字永远停在「最近更新」。
+    return ValueListenableBuilder<int>(
+      valueListenable: fanqie.filterRevision,
+      builder: (context, _, _) => _buildCategoryToolbar(context, count),
+    );
+  }
+
+  Widget _buildCategoryToolbar(BuildContext context, int? count) =>
       BookCollectionRegionToolbar(
         title: '发现',
         category: _lowerCategory,

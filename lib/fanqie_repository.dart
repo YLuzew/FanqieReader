@@ -63,6 +63,11 @@ class FanqieRepository extends NovelRepository
   String filterSubCategory = '0';
   bool filterActive = false;
 
+  /// 顶栏那行字（「最近更新」）是 `DiscoverPage` 这个 StatelessWidget 里算的，
+  /// 筛完改的是 repository 的字段，父级不会自己重建。加一个计数器，让顶栏
+  /// 挂在上头，筛完一次就跟着变一次。
+  final ValueNotifier<int> filterRevision = ValueNotifier<int>(0);
+
   /// 落地页里带回来的筛选项（sort_by / book_status / sub_category 三组）。
   Map<String, Object?> filterFacets = const {};
 
@@ -317,6 +322,7 @@ class FanqieRepository extends NovelRepository
     if (bookStatus != null) filterBookStatus = bookStatus;
     if (subCategory != null) filterSubCategory = subCategory;
     if (active != null) filterActive = active;
+    filterRevision.value++;
   }
 
   @override
