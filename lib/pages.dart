@@ -23,6 +23,8 @@ import 'local_book_series.dart';
 import 'local_book_batch_page.dart';
 import 'app_interactions.dart';
 import 'author_works_page.dart';
+import 'fanqie_api.dart';
+import 'fanqie_repository.dart';
 import 'archive_carousel.dart';
 import 'backup_page.dart';
 import 'haptic_settings_page.dart';
@@ -641,6 +643,9 @@ class HomeShellState extends State<HomeShell> with TickerProviderStateMixin {
                                   feed: _activeSearch,
                                   state: widget.state,
                                   repository: widget.repository,
+                                  authorLookup: fanqieAuthorLookup(
+                                    widget.repository,
+                                  ),
                                   onOpenBook: _dismissSearchKeyboard,
                                   allowBlockedTags: _searchScope == 0,
                                   showSources:
@@ -3723,6 +3728,149 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
+
+/// 搜索框里的人是位作者时，把作者本人放在结果最上面。
+///
+/// 只认**名字完全一致**的作者卡：番茄综合 tab 会顺带返回一堆相近的账号，
+/// 全列出来就成了推荐位。一个字不差才显示。
+class SearchAuthorStrip extends StatefulWidget {
+  const SearchAuthorStrip({
+    super.key,
+    required this.query,
+    required this.lookup,
+    required this.repository,
+    required this.state,
+  });
+
+  final String query;
+  final Future<List<FanqieAuthor>> Function(String query) lookup;
+  final NovelRepository repository;
+  final LibraryState state;
+
+  @override
+  State<SearchAuthorStrip> createState() => _SearchAuthorStripState();
+}
+
+class _SearchAuthorStripState extends State<SearchAuthorStrip> {
+  List<FanqieAuthor> _authors = const [];
+  String _loaded = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant SearchAuthorStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query) _load();
+  }
+
+  Future<void> _load() async {
+    final query = widget.query.trim();
+    _loaded = query;
+    if (query.isEmpty) {
+      if (mounted && _authors.isNotEmpty) setState(() => _authors = const []);
+      return;
+    }
+    try {
+      final found = await widget.lookup(query);
+      if (!mounted || _loaded != query) return;
+      setState(() {
+        _authors = found
+            .where((author) => author.name.trim() == query)
+            .toList(growable: false);
+      });
+    } catch (_) {
+      if (!mounted || _loaded != query) return;
+      setState(() => _authors = const []);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_authors.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final author in _authors)
+            Semantics(
+              button: true,
+              label: '查看${author.name}的作品',
+              child: JellyTapSurface(
+                key: ValueKey(('search-author', author.name)),
+                onTap: () => pushNovelPage<void>(
+                  context,
+                  AuthorWorksPage(
+                    author: author.name,
+                    repository: widget.repository,
+                    state: widget.state,
+                  ),
+                  reduceMotion: widget.state.reduceMotion,
+                  explorationKey: ('author', author.name.trim(), false),
+                ),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: .5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      ArchiveIcon(
+                        CupertinoIcons.person_crop_circle,
+                        size: 26,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            AppText(
+                              author.name,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            AppText(
+                              '作者 · 点开看他的作品',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ArchiveIcon(
+                        CupertinoIcons.chevron_right,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class InlineSearchResults extends StatelessWidget {
   const InlineSearchResults({
     super.key,
@@ -3735,6 +3883,7 @@ class InlineSearchResults extends StatelessWidget {
     this.showSources = false,
     this.fromCache = false,
     this.allowBlockedTags = false,
+    this.authorLookup,
   });
   final LibraryState state;
   final NovelRepository repository;
@@ -3743,6 +3892,11 @@ class InlineSearchResults extends StatelessWidget {
   final ValueChanged<String>? onRecall;
   final String emptyQueryTitle;
   final bool showSources, fromCache, allowBlockedTags;
+
+  /// 搜索词同时是一本书和一个人时，把作者本尊提到结果最前面一条。
+  /// 番茄的搜索框只搜「内容」，搜作者名会出来一串他写的书 —— 用户想找的
+  /// 是作者本人，所以这里再查一次综合 tab 的作者卡（`show_type == 132`）。
+  final Future<List<FanqieAuthor>> Function(String query)? authorLookup;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -4044,6 +4198,13 @@ class InlineSearchResults extends StatelessWidget {
                     children: [
                       if (feed.query.isEmpty && onRecall != null)
                         RecentSearches(state: state, onRecall: onRecall!),
+                      if (feed.query.isNotEmpty && authorLookup != null)
+                        SearchAuthorStrip(
+                          query: feed.query,
+                          lookup: authorLookup!,
+                          repository: repository,
+                          state: state,
+                        ),
                       Row(
                         children: [
                           Expanded(

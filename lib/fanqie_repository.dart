@@ -8,6 +8,7 @@ import 'catalog.dart';
 import 'fanqie_api.dart';
 import 'fanqie_font.dart';
 import 'fanqie_ids.dart';
+import 'offline_repository.dart';
 import 'publication_catalog.dart';
 import 'tag_catalogue.dart';
 
@@ -393,4 +394,18 @@ class FanqieRepository extends NovelRepository
     if (value is num) return '$value';
     return null;
   }
+}
+
+/// 从任意一层仓库里找出能查番茄作者的那个 api。
+///
+/// 搜索页拿到的通常是 `OfflineNovelRepository`（外面套了离线缓存），
+/// 真正联网的是它的 `remote`，所以往下剥一层再判断。
+Future<List<FanqieAuthor>> Function(String query)? fanqieAuthorLookup(
+  NovelRepository repository,
+) {
+  if (repository is FanqieRepository) return repository.api.searchAuthors;
+  if (repository is OfflineNovelRepository) {
+    return fanqieAuthorLookup(repository.remote);
+  }
+  return null;
 }
