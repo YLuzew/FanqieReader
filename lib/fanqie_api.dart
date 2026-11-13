@@ -842,6 +842,9 @@ class FanqieApi {
       wantFirst ? FanqieEndpoints.homeTab : FanqieEndpoints.homeFeed,
       query,
       host: FanqieEndpoints.shelfHost,
+      // 登录了就带上，推荐会从「路人热榜」变成「按你读过什么推」；
+      // 没登录时 cookie 是空串，_appGet 会自己忽略。
+      cookie: cookie,
     );
     final data = decoded['data'];
     if (data is! Map) throw const FanqieException('发现页没有拿到书流');
