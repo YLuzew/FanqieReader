@@ -24,6 +24,7 @@ import 'local_book_batch_page.dart';
 import 'app_interactions.dart';
 import 'author_works_page.dart';
 import 'fanqie_api.dart';
+import 'fanqie_filter_sheet.dart';
 import 'fanqie_repository.dart';
 import 'archive_carousel.dart';
 import 'backup_page.dart';
@@ -1328,18 +1329,38 @@ class DiscoverPage extends StatelessWidget {
         categoryKey: const ValueKey('discover-category'),
         filterKey: const ValueKey('discover-filter'),
         viewKey: const ValueKey('discover-view'),
-        // 番茄没有「榜单 / 标签 / 出版文库 / 屏蔽」这一套（那是文库的体系）。
-        // 发现页走的又是推荐流，服务端没有排序参数，所以这两个入口点了
-        // 只会弹一个全空的面板 —— 直接关掉，不留假按钮。
         onCategory: onChooseCategory != null
             ? () => onChooseCategory!(context)
-            : null,
-        onFilter: null,
+            : feed == null
+            ? null
+            : () => _chooseSort(context),
+        onFilter: onChooseCategory != null
+            ? () => onChooseCategory!(context)
+            : feed == null
+            ? null
+            : () => _chooseSort(context),
         onView: () => _chooseView(context),
         loading: feed?.loading == true && feed?.hasLoaded != true,
       );
 
   Future<void> _chooseSort(BuildContext context) async {
+    // 番茄没有文库那套「榜单 / 标签 / 出版文库 / 屏蔽」—— 那是轻小说文库
+    // 的分类体系。番茄只有分类、排序、状态、细分标签四个维度，而且挂在
+    // 分类落地页上。所以这里换成它自己的面板，别弹一个点不动的空壳。
+    if (fanqieRepositoryOf(repository) case final fanqie?) {
+      final choice = await showFanqieFilterSheet(context, fanqie);
+      if (choice == null || !context.mounted) return;
+      fanqie.applyFilter(
+        categoryId: choice.categoryId,
+        categoryName: choice.categoryName,
+        sortBy: choice.sortBy,
+        bookStatus: choice.bookStatus,
+        subCategory: choice.subCategory,
+        active: choice.active,
+      );
+      await feed?.refresh();
+      return;
+    }
     final features = WenkuFeaturesScope.maybeOf(context);
     final selected = await showJellySheet<DiscoverySelection>(
       context: context,

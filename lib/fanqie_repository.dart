@@ -53,6 +53,19 @@ class FanqieRepository extends NovelRepository
   /// 目录缓存。
   final Map<int, List<NovelChapter>> _chapters = {};
 
+  /// 发现页的番茄筛选。番茄的推荐流没有排序参数 —— 能被筛选的只有分类
+  /// 落地页（new_category/landing），它带 sort_by / book_status / sub_category
+  /// 三个维度。所以用户在发现页选了任一项之后，就切到落地页取书。
+  int filterCategoryId = 1;
+  String filterCategoryName = '都市';
+  String filterSortBy = '24';
+  String filterBookStatus = '2';
+  String filterSubCategory = '0';
+  bool filterActive = false;
+
+  /// 落地页里带回来的筛选项（sort_by / book_status / sub_category 三组）。
+  Map<String, Object?> filterFacets = const {};
+
   static const channels = <FanqieChannel>[
     FanqieChannel(1, '推荐'),
     FanqieChannel(2, '男生'),
@@ -226,6 +239,7 @@ class FanqieRepository extends NovelRepository
     int page = 1,
     bool refresh = false,
   }) async {
+    if (filterActive) return _browseCategory(page);
     final feed = await api.fetchHomeFeed(page: page);
     final items = <Novel>[];
     for (final entry in feed.books) {
@@ -242,6 +256,59 @@ class FanqieRepository extends NovelRepository
       page: page,
       totalPages: items.isEmpty ? page : page + 1,
     );
+  }
+
+  /// 走分类落地页取书。`offset` 是条数不是页码（番茄那边就叫 offset）。
+  Future<NovelPage> _browseCategory(int page) async {
+    final data = await api.fetchCategory(
+      categoryId: filterCategoryId,
+      offset: (page - 1) * 100,
+      filters: {
+        'sort_by': filterSortBy,
+        'book_status': filterBookStatus,
+        if (filterSubCategory != '0') 'sub_category': filterSubCategory,
+      },
+    );
+    // 同一份响应就带着筛选项，顺手存下来，省一次请求。
+    final rule = data['rule'];
+    if (rule is Map) filterFacets = Map<String, Object?>.from(rule);
+    final raw = data['book_info'];
+    if (raw is! List) return NovelPage(items: const [], page: page);
+    final items = await _novelsFromApp([
+      for (final entry in raw)
+        if (entry is Map) Map<String, Object?>.from(entry),
+    ]);
+    final hasMore = data['has_more'] == true;
+    return NovelPage(
+      items: List.unmodifiable(items),
+      page: page,
+      totalPages: hasMore ? page + 1 : page,
+    );
+  }
+
+  /// 只取筛选项，不改当前状态。用户点开筛选面板时先调这个。
+  Future<Map<String, Object?>> loadFilterFacets(int categoryId) async {
+    final data = await api.fetchCategory(categoryId: categoryId, limit: 20);
+    final rule = data['rule'];
+    if (rule is Map) filterFacets = Map<String, Object?>.from(rule);
+    return filterFacets;
+  }
+
+  /// 套用筛选。三个参数都传当前值，`active` 由调用方决定。
+  void applyFilter({
+    int? categoryId,
+    String? categoryName,
+    String? sortBy,
+    String? bookStatus,
+    String? subCategory,
+    bool? active,
+  }) {
+    if (categoryId != null) filterCategoryId = categoryId;
+    if (categoryName != null) filterCategoryName = categoryName;
+    if (sortBy != null) filterSortBy = sortBy;
+    if (bookStatus != null) filterBookStatus = bookStatus;
+    if (subCategory != null) filterSubCategory = subCategory;
+    if (active != null) filterActive = active;
   }
 
   @override
@@ -436,6 +503,16 @@ Future<List<FanqieAuthor>> Function(String query)? fanqieAuthorLookup(
   if (repository is FanqieRepository) return repository.api.searchAuthors;
   if (repository is OfflineNovelRepository) {
     return fanqieAuthorLookup(repository.remote);
+  }
+  return null;
+}
+
+/// 从仓库链上扒出番茄实现。发现页拿到的是套了离线缓存的
+/// `OfflineNovelRepository`，筛选面板要知道自己面对的是番茄还是文库。
+FanqieRepository? fanqieRepositoryOf(NovelRepository repository) {
+  if (repository is FanqieRepository) return repository;
+  if (repository is OfflineNovelRepository) {
+    return fanqieRepositoryOf(repository.remote);
   }
   return null;
 }
