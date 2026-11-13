@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'catalog.dart';
 import 'local_books.dart';
 
 /// 导入过程中需要告知用户的一条说明（旧格式、缺封面等）。
@@ -7,6 +8,12 @@ typedef LocalImportNotice = ({String name, String message});
 
 /// 一个没能导入的文件及其原因。
 typedef LocalImportFailure = ({String name, String message});
+
+/// 合订本里的一卷。
+///
+/// 必须与 [saveLocalSeries] 的 `volumes` 参数逐字节同型
+/// （local_series_actions.dart:36 `List<({int bookId, String title})>`）。
+typedef LocalImportVolume = ({int bookId, String title});
 
 /// 一次导入的结论：进了哪些书、新增多少、跳过多少、失败与提醒。
 class LocalImportReport {
@@ -27,20 +34,6 @@ class LocalImportReport {
   final String summary;
 
   bool get isEmpty => added == 0 && failures.isEmpty;
-}
-
-/// 一张「合订本里的某一卷」。
-@immutable
-class LocalImportVolume {
-  const LocalImportVolume({
-    required this.bookId,
-    required this.title,
-    this.chapterCount = 0,
-  });
-
-  final int bookId;
-  final String title;
-  final int chapterCount;
 }
 
 /// 一组合并候选：同一部作品拆成多卷的书。
@@ -68,7 +61,7 @@ class LocalImportGroup {
 
 /// 把导入结果按「同系列」归并成合并候选。
 ///
-/// 已经在某个系列里的书归到同组并带上 [LocalImportGroup.targetId]；
+/// 已在某个系列里的书归到同组并带上 [LocalImportGroup.targetId]；
 /// 其余每本单独成组，等待用户指定目标。
 List<LocalImportGroup> localImportGroups(
   LocalBookStore books,
@@ -78,7 +71,7 @@ List<LocalImportGroup> localImportGroups(
   final standalone = <LocalImportGroup>[];
 
   for (final id in bookIds) {
-    final book = books.book(id);
+    final Novel? book = books.book(id);
     if (book == null) continue;
     final series = books.seriesFor(id);
     if (series == null) {
@@ -86,9 +79,7 @@ List<LocalImportGroup> localImportGroups(
         LocalImportGroup(
           seed: id,
           title: book.title,
-          volumes: [
-            LocalImportVolume(bookId: id, title: book.title),
-          ],
+          volumes: <LocalImportVolume>[(bookId: id, title: book.title)],
           needsTarget: true,
         ),
       );
@@ -99,16 +90,17 @@ List<LocalImportGroup> localImportGroups(
 
   final result = <LocalImportGroup>[];
   for (final entry in grouped.entries) {
-    final members = entry.value.map((id) => books.book(id)).whereType<Novel>();
-    final list = members.toList();
-    if (list.isEmpty) continue;
+    final members = <Novel>[
+      for (final id in entry.value)
+        if (books.book(id) case final book?) book,
+    ];
+    if (members.isEmpty) continue;
     result.add(
       LocalImportGroup(
         seed: entry.key,
-        title: list.first.title,
-        volumes: [
-          for (final book in list)
-            LocalImportVolume(bookId: book.id, title: book.title),
+        title: members.first.title,
+        volumes: <LocalImportVolume>[
+          for (final book in members) (bookId: book.id, title: book.title),
         ],
         targetId: entry.key,
       ),
@@ -135,16 +127,14 @@ class LocalScanResult {
 
   String get summary => report.summary.isNotEmpty
       ? report.summary
-      : (report.added > 0
-            ? '已导入 ${report.added} 本'
-            : '本次没有新增书籍');
+      : (report.added > 0 ? '已导入 ${report.added} 本' : '本次没有新增书籍');
 
   bool get isEmpty => total == 0 && pending == 0;
 }
 
 /// 逐个文件导入的批次控制器。
 ///
-/// 当前构建未包含原生批量导入实现，[run] 仅回放空结果，
+/// 当前构建未包含原生批量导入实现，[run] 只回一份空结果，
 /// 不会向书库写入任何条目。
 class LocalImportBatch extends ChangeNotifier {
   LocalImportBatch({this.onProgress});

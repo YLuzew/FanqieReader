@@ -56,7 +56,13 @@ class LanReadingSync {
   /// 在线库可用时非 null（决定在线书能否发起续读）。
   Object? get repository => null;
 
-  LanReadingHandoff? get handoff => null;
+  /// 提醒条持有者。
+  ///
+  /// 返回非空对象：`_lanSync?.handoff.received` 这类链式访问才能成立，
+  /// 内部状态恒为空，提醒条不会出现。
+  LanReadingHandoff get handoff => _handoff;
+
+  final LanReadingHandoff _handoff = LanReadingHandoff();
 
   Future<void> initialize() async {}
 

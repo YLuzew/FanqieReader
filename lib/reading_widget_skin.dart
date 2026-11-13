@@ -31,12 +31,15 @@ int readingDailyGoal(int? stored) {
 }
 
 /// 阅读目标的一句话说明，例如「今日目标 30 分钟 · 已读 12 分钟（40%）」。
-String readingGoalCaption(int minutes, int seconds) {
+///
+/// [seconds] 允许为空：统计还没结算时 verifiedTodaySeconds 是 null，
+/// 此时按 0 计，不显示负数。
+String readingGoalCaption(int minutes, int? seconds) {
   if (minutes <= 0) return '按自己的节奏阅读';
-  final done = seconds ~/ 60;
+  final done = (seconds ?? 0) ~/ 60;
   final target = minutes * 60;
   final percent = target <= 0
       ? 0
-      : ((seconds / target) * 100).clamp(0, 999).round();
+      : (((seconds ?? 0) / target) * 100).clamp(0, 999).round();
   return '今日目标 $minutes 分钟 · 已读 $done 分钟（$percent%）';
 }
