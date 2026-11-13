@@ -75,6 +75,31 @@ class FanqieRepository extends NovelRepository
   /// 两条路：输入像书号 / 书籍链接就直接开那本书（省一次搜索）；
   /// 否则走 App 网关的 `search/page/v/`。
   @override
+  /// 一页给满 99 本。
+  ///
+  /// 基类的 `NovelPage.fromItems` 默认 `pageSize = 20`，而番茄这个接口一次
+  /// 就能拿 99 条 —— 不调大等于把已经付过钱的请求丢掉四份。
+  @override
+  Future<NovelPage> searchPage(
+    String query, {
+    int page = 1,
+    bool refresh = false,
+  }) async => NovelPage.fromItems(await search(query), page, pageSize: 99);
+
+  /// 作者页同理：搜索结果里同作者的书一次全给，不再每页 20 条慢慢翻。
+  @override
+  Future<NovelPage> authorPage(
+    String author, {
+    int page = 1,
+    bool refresh = false,
+  }) async => NovelPage.fromItems(
+    (await search(
+      author,
+    )).where((book) => sameNovelAuthor(book.author, author)).toList(),
+    page,
+    pageSize: 99,
+  );
+
   Future<List<Novel>> search(String query) async {
     final word = query.trim();
     if (word.isEmpty) return const [];
