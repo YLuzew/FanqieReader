@@ -1,5 +1,5 @@
 name: wenku8_flutter
-description: "轻小说文库 Flutter 迁移版（Android 优先）。"
+description: "番茄小说第三方 Flutter 客户端（基于 Wenku8_Flutter 的阅读器改造）。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.5.6+2277
+version: 0.1.0+1
 
 environment:
   sdk: ^3.11.3

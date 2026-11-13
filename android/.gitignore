@@ -7,8 +7,8 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/to/reference-keystore
-key.properties
-**/*.keystore
-**/*.jks
+# 自用签名，故意提交进仓库：CI 必须用同一把 key，否则每次出的包签名不同、
+# 覆盖安装必失败。这不是上架用的分发签名。
+# key.properties
+# **/*.keystore
+# **/*.jks

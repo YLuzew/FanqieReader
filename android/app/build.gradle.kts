@@ -31,13 +31,13 @@ android {
     }
 
     defaultConfig {
-        // Public source previews must not replace an installed distribution.
-        applicationId = "org.mewx.wenku8_flutter.source_preview"
+        // 改过内容源的版本，包名与文库版分开，避免两台应用互相覆盖。
+        applicationId = "com.yluzew.fanqieread"
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders["wenkuAppLabel"] = "轻小说文库 · 源码预览"
+        manifestPlaceholders["wenkuAppLabel"] = "番茄阅读"
         // AGP otherwise builds upstream desktop utilities too, including the
         // DRM tool whose encryption code is intentionally disabled in this app.
         externalNativeBuild.cmake.targets.addAll(listOf("mobi", "wenku_mobi"))
@@ -59,6 +59,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // debug 也用同一把自用 key：CI 每个 job 现生成 debug keystore，
+            // 每轮签名都不同，覆盖安装必然失败。固定下来就不用反复卸载。
+            if (releaseKeyFile.isFile) {
+                signingConfig = signingConfigs.getByName("distribution")
+            }
+        }
         release {
             proguardFile(file("document-import.pro"))
             if (readerPreview) {
