@@ -72,6 +72,21 @@ abstract final class FanqieEndpoints {
   static const content = '/reading/reader/full/v/';
   static const search = '/reading/bookapi/search/page/v/';
 
+  /// 书架/历史/进度走的是 api5-normal-*，不是正文那台网关。
+  /// 路径取自 fqapp 的 account_library.rs（官方 App 的 RPC 反查）。
+  static const shelfList = '/reading/bookapi/bookshelf/list/v1/';
+  static const shelfInfo = '/reading/bookapi/bookshelf/info/v1/';
+  static const readHistory = '/reading/bookapi/read_history/list/v1/';
+  static const readProgress = '/reading/bookapi/read_progress/list/v1/';
+
+  /// 书架接口要求的版本号，比正文网关的 66.9 新。签名会从 query 里取
+  /// version_name 写进 x-argus，所以这几个值必须成套用，别单个换。
+  static const shelfVersionCode = '73932';
+  static const shelfVersionName = '7.3.9.32';
+  static const shelfUserAgent =
+      'com.dragon.read/73932 (Linux; U; Android 15; zh_CN; '
+      'sdk_gphone64_arm64; Build/AP3A.241105.008)';
+
   /// 桌面浏览器 UA。移动端 UA 会拿到另一套页面结构，别换。
   static const userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -291,18 +306,33 @@ class FanqieApi {
   }
 
   /// 带签名的 App GET。签名绑 URL，所以 query 必须和这里拼的一字不差。
-  Future<Uint8List> _appGet(String path, String query) async {
+  ///
+  /// [host] 换机器（正文是 reading.snssdk.com，书架是 api5-normal-*），
+  /// [cookie] 只给要账号的接口用 —— 正文接口不认 Cookie，带上反而多一层校验。
+  Future<Uint8List> _appGet(
+    String path,
+    String query, {
+    String? host,
+    String? cookie,
+    String? userAgent,
+  }) async {
     final signature = fanqieSignHeaders(
       query: query,
       deviceId: session.deviceId,
       installId: session.installId,
     );
     final uri = Uri.parse(
-      'https://${FanqieEndpoints.readingHost}$path?$query',
+      'https://${host ?? FanqieEndpoints.readingHost}$path?$query',
     );
     final request = await _client.getUrl(uri).timeout(timeout);
-    request.headers.set('User-Agent', FanqieEndpoints.appUserAgent);
+    request.headers.set(
+      'User-Agent',
+      userAgent ?? FanqieEndpoints.appUserAgent,
+    );
     request.headers.set('Accept', 'application/json');
+    if (cookie != null && cookie.isNotEmpty) {
+      request.headers.set(HttpHeaders.cookieHeader, cookie);
+    }
     signature.forEach(request.headers.set);
     final response = await request.close().timeout(timeout);
     final bytes = <int>[];
@@ -388,6 +418,44 @@ class FanqieApi {
       throw const FanqieException('这一章在番茄上要付费或要登录才能看');
     }
     return data;
+  }
+
+  /// 拉书架。返回服务端原始 data，不做字段解读 —— 书架的书目结构和
+  /// 网页版的 searchItem 不是一套，没实测之前不瞎映射。
+  ///
+  /// 注意：**未登录时也回 code:0**，data 里只有 `{is_all, server_time, limit}`，
+  /// 没有 books。所以「成功但空」是没 Cookie，不是签名错了。
+  /// 账号认的是 Cookie 里的 sessionid / sessionid_ss / sid_tt，
+  /// device_id 只负责过签名。
+  Future<Map<String, Object?>?> fetchShelf() async {
+    final auth = cookie ?? '';
+    if (auth.isEmpty) return null;
+    final query = 'aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&device_platform=android'
+        '&version_code=${FanqieEndpoints.shelfVersionCode}'
+        '&version_name=${FanqieEndpoints.shelfVersionName}'
+        '&device_id=${session.deviceId}'
+        '&iid=${session.installId}'
+        '&server_time=0';
+    final bytes = await _appGet(
+      FanqieEndpoints.shelfList,
+      query,
+      host: FanqieEndpoints.host,
+      cookie: auth,
+      userAgent: FanqieEndpoints.shelfUserAgent,
+    );
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return null;
+    if (decoded['code'] != 0) {
+      throw FanqieException(
+        '书架接口返回 ${decoded['code']}',
+        detail: '${decoded['message'] ?? ''}',
+      );
+    }
+    final data = decoded['data'];
+    if (data is! Map) return null;
+    return Map<String, Object?>.from(data);
   }
 
   /// 取封面图。
