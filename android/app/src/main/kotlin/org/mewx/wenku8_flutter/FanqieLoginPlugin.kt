@@ -178,14 +178,14 @@ class FanqieLoginActivity : Activity() {
             ),
         )
         root.addView(bar)
-        root.addView(
-            web,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
-            ),
+        // 第三个参数是 weight，但 LinearLayout.LayoutParams 的三参构造在
+        // 部分 compileSdk 下会解析到别的重载，直接赋属性最稳。
+        val webParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
         )
+        webParams.weight = 1f
+        root.addView(web, webParams)
         setContentView(root)
     }
 
