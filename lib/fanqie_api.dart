@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'fanqie_sign.dart';
+
 // 番茄小说的传输层。
 //
 // 走的是**网页版**（fanqienovel.com），不是 App 的 API。
@@ -16,6 +18,12 @@ import 'dart:typed_data';
 //   GET https://fanqienovel.com/page/{bookId}     -> window.__INITIAL_STATE__.page
 //   GET https://fanqienovel.com/reader/{itemId}   -> window.__INITIAL_STATE__.reader.chapterData
 // 两者都带 Referer 指向书页，4 秒内返回 600KB / 40KB。
+//
+// 网页版只放前 10 章（第 11 章起 isChapterLock=true）。要拿全本得走 App 的
+// reading.snssdk.com/reading/reader/full/v/ —— 它要 x-argus + x-ladon 签名，
+// 签名算法在 fanqie_sign.dart（纯 Dart），正文还要用 registerkey 换来的
+// secret key 做 AES-CBC 解密。所以 fetchChapter 现在的顺序是：
+//   1) App 接口（全本）   2) 失败才回落网页版（只有前 10 章）
 //
 // 未验证：搜索、频道、标签。网页版这几个入口要么是 POST，要么需要登录态，
 // 下面保留了 App API 的路径常量与 get()，但都不保证能通。
@@ -41,6 +49,12 @@ abstract final class FanqieEndpoints {
   static const host = 'api5-normal-sinfonlineb.fqnovel.com';
   static const alternateHost = 'api5-normal-lf.fqnovel.com';
 
+  /// 正文网关。和 api5-normal-* 不是一台机器：这边吃 x-argus + x-ladon，
+  /// 那边吃 X-Helios + X-Medusa，算法完全不同。
+  static const readingHost = 'reading.snssdk.com';
+  static const readerFullPath = '/reading/reader/full/v/';
+  static const registerKeyPath = '/reading/crypt/registerkey';
+
   /// App 侧的公共参数。抓包得来的，缺一个就静默返回空 body。
   static const aid = 1967;
   static const appName = 'novelapp';
@@ -65,18 +79,33 @@ abstract final class FanqieEndpoints {
 
   /// 从 Cookie 里取 csrf token 用的键。网页版没它也能读公开章节。
   static const csrfCookie = 'passport_csrf_token';
+
+  /// App 正文接口认这个 UA。换成浏览器 UA 会掉回网页版那套限制。
+  static const appUserAgent =
+      'com.dragon.read/71332 (Linux; U; Android 15; zh_CN; '
+      'sdk_gphone64_arm64; Build/AP3A.241105.008;tt-ok/3.12.13.20)';
+
+  /// registerkey 只认裸 UA，带版本号那串会被拒。
+  static const appShortUserAgent = 'com.dragon.read';
 }
 
 /// 设备侧的一次性标识。只有 App API 用得上，网页版不需要。
 class FanqieSession {
   FanqieSession({String? deviceId, String? installId})
-    : deviceId = deviceId ?? _randomDigits(20),
-      installId = installId ?? _randomDigits(11);
+    : deviceId = deviceId ?? _randomDeviceId(),
+      // 必须是 "0"：registerkey 会核对 iid，随便填一个会被判 verify fail。
+      installId = installId ?? '0';
 
   final String deviceId;
   final String installId;
 
   static final _random = Random.secure();
+
+  /// 番茄的真实设备号是 15~19 位十进制，首位 6~7。
+  ///
+  /// 别用 9 开头或 20 位：registerkey 要把设备号编进 u64 再签名，
+  /// 超出 2^63 的值服务端直接回 `{"code":500002,"message":"verify fail"}`。
+  static String _randomDeviceId() => '7${_randomDigits(18)}';
 
   static String _randomDigits(int length) {
     final buffer = StringBuffer();
@@ -129,6 +158,166 @@ class FanqieApi {
     if ((cookie ?? '').isNotEmpty) 'Cookie': cookie!,
   };
 
+  /// 正文解密用的密钥。由 registerkey 按 device_id 下发，进程内缓存即可 ——
+  /// 它跟设备绑定，不跟账号绑定，丢了重新注册一次就有。
+  String? _secretKey;
+
+  /// 正在注册时别的章节也来要 key，共用同一个请求，别各自发一遍。
+  Future<String?>? _secretKeyPending;
+
+  /// 服务端明确拒绝过（code != 0）才置位。网络抖动不算 —— 那种下次还能成。
+  bool _secretKeyBroken = false;
+
+  /// App 正文请求：`reading.snssdk.com/reading/reader/full/v/`。
+  ///
+  /// 返回 `{content, title}`，`content` 是已解密的 XHTML。拿不到就返回 null，
+  /// 由调用方决定要不要回落。
+  Future<Map<String, Object?>?> _fetchChapterViaApp(String itemId) async {
+    final key = await _ensureSecretKey();
+    if (key == null) return null;
+
+    final query = 'aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&channel=0'
+        '&device_platform=android'
+        '&device_id=${session.deviceId}'
+        '&device_type=Honor10'
+        '&item_id=$itemId'
+        '&os_version=0'
+        '&version_code=66.9';
+
+    final response = await _appGet(
+      FanqieEndpoints.readerFullPath,
+      query,
+    );
+    final body = utf8.decode(response, allowMalformed: true);
+    if (body.trimLeft().startsWith('<')) return null;
+    final decoded = jsonDecode(body);
+    if (decoded is! Map) return null;
+    if (decoded['code'] != 0) {
+      throw FanqieException(
+        '正文接口返回 ${decoded['code']}',
+        detail: '${decoded['message'] ?? ''}',
+      );
+    }
+    final data = decoded['data'];
+    if (data is! Map) return null;
+    final encrypted = data['content'];
+    if (encrypted is! String || encrypted.isEmpty || encrypted == 'Invalid') {
+      return null;
+    }
+
+    final plain = decryptUpstream(encrypted, key);
+    final text = utf8.decode(plain, allowMalformed: true);
+    final title = data['title'];
+    return {
+      'content': text,
+      if (title is String && title.isNotEmpty) 'title': title,
+      'itemId': itemId,
+    };
+  }
+
+  /// 换 secret key。device_id 是随机会话号也能注册成功 —— 服务端不校验
+  /// 这个号是否来自真实装机，只要求它是一个合法的数字 id。
+  Future<String?> _ensureSecretKey() {
+    if (_secretKey != null) return Future<String?>.value(_secretKey);
+    if (_secretKeyBroken) return Future<String?>.value(null);
+    return _secretKeyPending ??= _registerSecretKey().whenComplete(() {
+      _secretKeyPending = null;
+    });
+  }
+
+  Future<String?> _registerSecretKey() async {
+    final content = encodeRegisterContent(session.deviceId);
+    final payload = utf8.encode(jsonEncode({'content': content}));
+    final compressed = gzip.encode(payload);
+
+    // 这串必须按字母序拼：服务端拿它去核对签名，顺序错了签名就对不上。
+    final query = [
+      'aid=${FanqieEndpoints.aid}',
+      'app_name=${FanqieEndpoints.appName}',
+      'channel=0',
+      'device_id=${session.deviceId}',
+      'device_platform=android',
+      'iid=${session.installId}',
+      'os_version=0',
+      'version_code=6.1.5.32',
+      'version_name=6.1.5.32',
+    ].join('&');
+
+    final signature = fanqieSignHeaders(
+      query: query,
+      body: compressed,
+      deviceId: session.deviceId,
+      installId: session.installId,
+    );
+
+    final uri = Uri.parse(
+      'https://${FanqieEndpoints.readingHost}'
+      '${FanqieEndpoints.registerKeyPath}?$query',
+    );
+    final request = await _client.postUrl(uri).timeout(timeout);
+    request.headers.set('User-Agent', FanqieEndpoints.appShortUserAgent);
+    request.headers.set('Content-Encoding', 'gzip');
+    request.headers.contentType = ContentType.json;
+    request.headers.set('Accept', 'application/json');
+    signature.forEach(request.headers.set);
+    request.add(compressed);
+
+    final response = await request.close().timeout(timeout);
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > _maxBody) {
+        throw const FanqieException('registerkey 响应超过 12MB，已中断');
+      }
+    }
+    if (response.statusCode != 200 || bytes.isEmpty) {
+      throw FanqieException('registerkey 失败：HTTP ${response.statusCode}');
+    }
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return null;
+    // code 500002 = verify fail，多半是 device_id 或 iid 不合规。
+    // 这种换一个设备号还能成，但同一台设备号重试没用，所以只钉这一次。
+    if (decoded['code'] != 0) {
+      if (decoded['code'] == 500002) _secretKeyBroken = true;
+      return null;
+    }
+    final data = decoded['data'];
+    if (data is! Map) return null;
+    final key = data['key'];
+    if (key is! String || key.isEmpty) return null;
+    return _secretKey = decryptRegisterKey(key);
+  }
+
+  /// 带签名的 App GET。签名绑 URL，所以 query 必须和这里拼的一字不差。
+  Future<Uint8List> _appGet(String path, String query) async {
+    final signature = fanqieSignHeaders(
+      query: query,
+      deviceId: session.deviceId,
+      installId: session.installId,
+    );
+    final uri = Uri.parse(
+      'https://${FanqieEndpoints.readingHost}$path?$query',
+    );
+    final request = await _client.getUrl(uri).timeout(timeout);
+    request.headers.set('User-Agent', FanqieEndpoints.appUserAgent);
+    request.headers.set('Accept', 'application/json');
+    signature.forEach(request.headers.set);
+    final response = await request.close().timeout(timeout);
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > _maxBody) {
+        throw const FanqieException('正文响应超过 12MB，已中断');
+      }
+    }
+    if (bytes.isEmpty) {
+      throw const FanqieException('正文接口返回空响应，签名可能没对');
+    }
+    return Uint8List.fromList(bytes);
+  }
+
   Map<String, Object?> get _commonQuery => {
     'aid': FanqieEndpoints.aid,
     'app_name': FanqieEndpoints.appName,
@@ -164,6 +353,17 @@ class FanqieApi {
   /// `content` 字段里是带混淆码位的 HTML，本方法**不做解码**，
   /// 由调用方交给 decodeFanqieGlyphs 处理 —— 传输层不该知道字体的事。
   Future<Map<String, Object?>> fetchChapter(String itemId) async {
+    // 先试 App 网关。它没有 10 章限制，但要多两步：签名 + 解密。
+    // 任何一步失败都当作"这条路不通"，回落到网页版，而不是把整本书卡死。
+    try {
+      final viaApp = await _fetchChapterViaApp(itemId);
+      if (viaApp != null) return viaApp;
+    } on FanqieException {
+      // 签名/解密失败不该盖住网页版能给的那 10 章。
+    } catch (_) {
+      // 网络层异常同理。
+    }
+
     final html = await _fetchHtml(
       Uri.https(
         FanqieEndpoints.webHost,
@@ -522,8 +722,11 @@ class FanqieBook {
       coverUrl: _string(raw['thumbUri']) ?? '',
       chapterCount: _int(raw['chapterTotal']) ?? 0,
       wordCount: _int(raw['wordNumber']) ?? 0,
-      // creationStatus: 0 连载中 / 1 已完结（抓到的两本都是 0）。
-      completed: _int(raw['creationStatus']) == 1,
+      // creationStatus：0 = 已完结，1 = 连载中（跟直觉相反，实测确认）。
+      // 证据：十日终焉(1496章/末章「陈俊南（终）」)、娇养玫瑰(「全文完」)、
+      // 莫若凌霄(「完结」) 全是 0；日更榜里 10~4970 章的在更书全是 1。
+      // 同页的 status 字段恒为 1，没有区分度，别用它。
+      completed: (_int(raw['creationStatus']) ?? 1) == 0,
       category: _string(raw['category']) ?? '',
       lastChapterTitle: _string(raw['lastChapterTitle']) ?? '',
     );
