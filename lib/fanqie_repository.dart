@@ -115,10 +115,19 @@ class FanqieRepository extends NovelRepository
   }
 
   @override
+  @override
   Future<String> chapterContent(int novelId, NovelChapter chapter) async {
     if (chapter.id == 0) {
       throw const FanqieException('这一章拿不到编号，试试退出重进这本书');
     }
+    final text = await _loadChapterText(chapter);
+    // 打开章节就顺手把进度报上去。失败不打断阅读 —— 番茄的阅读时长同步
+    // 本来就允许漏报，为了一个上报把正文卡住是本末倒置。
+    unawaited(_reportProgress(novelId, chapter));
+    return text;
+  }
+
+  Future<String> _loadChapterText(NovelChapter chapter) async {
     final data = await api.fetchChapter('${chapter.id}');
     final raw = data['content'];
     if (raw is! String || raw.trim().isEmpty) {
@@ -130,6 +139,19 @@ class FanqieRepository extends NovelRepository
       return decodeFanqieGlyphs(_toPlainText(fallback));
     }
     return decodeFanqieGlyphs(_toPlainText(raw));
+  }
+
+  Future<void> _reportProgress(int novelId, NovelChapter chapter) async {
+    // 没登录就别发 —— 发了也是「请先登录」，白白多一次请求。
+    if ((api.cookie ?? '').isEmpty) return;
+    final remote = ids.remoteIdFor(novelId);
+    if (remote == null) return;
+    try {
+      await api.pushReadingProgress(bookId: remote, itemId: '${chapter.id}');
+    } on Object catch (failure) {
+      // 进度上报是尽力而为：网络、登录、接口变更都不该冒泡到阅读界面。
+      debugPrint('番茄进度上报失败：$failure');
+    }
   }
 
   @override

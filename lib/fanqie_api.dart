@@ -256,6 +256,76 @@ class FanqieApi {
     return out;
   }
 
+  /// 读某本书的阅读进度。
+  ///
+  /// 番茄这批 `/api/reader/*` 有一个很好用的性质：**先校验登录，再管参数**。
+  /// 没带 cookie 时无论参数写成什么样都只回「请先登录」，不会报参数错误 ——
+  /// 说明参数格式可以等拿到登录态之后再校准，这里按最直觉的写法先接上。
+  Future<Map<String, Object?>> fetchReadingProgress(String bookId) async =>
+      _readerJson('/api/reader/book/progress', {'bookId': bookId});
+
+  /// 读某本书已读章节列表。
+  Future<Map<String, Object?>> fetchReadItemList(String bookId) async =>
+      _readerJson('/api/reader/book/read_item_list', {'bookId': bookId});
+
+  /// 上报阅读进度。多个章节一起上报走这个接口（单章上报没有独立路径，
+  /// `POST /api/reader/book/progress` 是 404，只有 GET）。
+  Future<Map<String, Object?>> pushReadingProgress({
+    required String bookId,
+    required String itemId,
+    int progress = 0,
+  }) async => _readerPost('/api/reader/book/batch_update_progress', {
+    'bookId': bookId,
+    'itemIds': [itemId],
+    'progress': progress,
+  });
+
+  Future<Map<String, Object?>> _readerJson(
+    String path,
+    Map<String, String> query,
+  ) async {
+    final text = await _fetchHtml(
+      'https://${FanqieEndpoints.webHost}$path?'
+      '${query.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}',
+      referer: 'https://${FanqieEndpoints.webHost}/',
+    );
+    final data = jsonDecode(text);
+    if (data is! Map) throw const FanqieException('进度接口返回的不是对象');
+    final map = Map<String, Object?>.from(data);
+    final message = _string(map['message']);
+    if (message != null && message.isNotEmpty) {
+      throw FanqieException(message, code: map['code'] is int ? map['code'] as int : null);
+    }
+    return map;
+  }
+
+  Future<Map<String, Object?>> _readerPost(
+    String path,
+    Map<String, Object?> body,
+  ) async {
+    final uri = Uri.parse('https://${FanqieEndpoints.webHost}$path');
+    final request = await _client.postUrl(uri).timeout(timeout);
+    _webHeaders.forEach(request.headers.set);
+    request.headers.contentType = ContentType.json;
+    request.add(utf8.encode(jsonEncode(body)));
+    final response = await request.close().timeout(timeout);
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > _maxBody) {
+        throw const FanqieException('响应超过 12MB，已中断');
+      }
+    }
+    final data = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (data is! Map) throw const FanqieException('进度接口返回的不是对象');
+    final map = Map<String, Object?>.from(data);
+    final message = _string(map['message']);
+    if (message != null && message.isNotEmpty) {
+      throw FanqieException(message, code: map['code'] is int ? map['code'] as int : null);
+    }
+    return map;
+  }
+
   /// 取一段网页 HTML。
   Future<String> _fetchHtml(String url, {String? referer}) async {
     final uri = Uri.parse(url);
