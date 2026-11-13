@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR", "UnstableApiUsage")
+
 import java.util.Properties
 
 plugins {
