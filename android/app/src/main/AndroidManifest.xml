@@ -31,6 +31,12 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".FanqieLoginActivity"
+            android:exported="false"
+            android:label="登录番茄"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ReaderActivity"
             android:exported="true"
             android:launchMode="singleTask"

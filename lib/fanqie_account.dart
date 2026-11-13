@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fanqie_api.dart';
+import 'fanqie_login.dart';
 import 'online_component.dart';
 import 'wenku_account.dart';
 
@@ -29,9 +30,6 @@ class FanqieAccount extends WenkuAccount {
   static const _cookieKey = 'fanqie.cookie.v1';
   static const _profileKey = 'fanqie.profile.v1';
 
-  /// 番茄的用户信息接口。未实测，失败时不影响已有登录态。
-  static const _userInfoPath = '/reading/user/info/v/';
-
   /// 是否已经有一条可用的登录态。
   bool get hasSession => (api.cookie ?? '').isNotEmpty;
 
@@ -57,16 +55,32 @@ class FanqieAccount extends WenkuAccount {
 
   /// 番茄没有面向第三方的密码登录。
   ///
-  /// 登录页沿用父类的「账号 / 密码」两栏，这里把它的语义改成：
-  /// 账号栏粘贴 Cookie（或只看 Cookie 里的 sessionid），密码栏留空。
-  /// 这样不用改页面结构，用户也能立刻用起来。
+  /// 账号栏留空 = 走 App 内的番茄登录页（推荐）。
+  /// 账号栏贴了东西 = 当作 Cookie 串导入（老路径，保留）。
   @override
   Future<void> login(String username, String password) async {
     final raw = (username + (password.isEmpty ? '' : '; $password')).trim();
     if (raw.isEmpty) {
-      throw const FanqieException('请把番茄的 Cookie 粘贴到账号栏');
+      await loginInWebView();
+      return;
     }
     final failure = await importCookie(raw);
+    if (failure != null) throw FanqieException(failure);
+  }
+
+  /// 开一个原生 WebView，让用户在番茄自己的页面上登录。
+  ///
+  /// 番茄的手机号登录带 bdturing 滑块，客户端自己跑不完；`sessionid` 又是
+  /// HttpOnly，网页里的 JS 读不到。所以真正能走通的就是这条：
+  /// 用户自己在番茄页面登，登完由 `CookieManager` 把 HttpOnly 的 cookie
+  /// 一起读回来。用户取消登录就静默返回，不当错误。
+  Future<void> loginInWebView() async {
+    if (busy) return;
+    // 这一步只在等用户操作，不占用 busy —— importCookie 会自己接管状态。
+    final cookie = await FanqieLogin.open();
+    // 用户在登录页点了返回，不算失败。
+    if (cookie == null) return;
+    final failure = await importCookie(cookie);
     if (failure != null) throw FanqieException(failure);
   }
 
@@ -94,7 +108,12 @@ class FanqieAccount extends WenkuAccount {
       await prefs.setString(_cookieKey, api.cookie!);
       authenticated = true;
       // 拉一次资料，顺便验证这条 Cookie 到底算不算数。
+      // 光是「拿到 sessionid」不算数 —— 服务端不认的时候资料接口会回 -1。
       await refreshProfile();
+      if (!authenticated) {
+        await _forgetSession();
+        return error ?? '番茄没有认出这条登录态';
+      }
       return null;
     } on FanqieException catch (failure) {
       error = failure.message;
@@ -112,40 +131,59 @@ class FanqieAccount extends WenkuAccount {
   @override
   Future<void> refreshProfile() async {
     if (!hasSession) throw const OnlineAuthenticationRequired();
-    try {
-      final data = await api.get(_userInfoPath);
-      final id = _intOf(data['user_id'] ?? data['uid'] ?? data['id']) ?? 0;
-      final nickname =
-          _stringOf(data['user_name'] ?? data['nickname'] ?? data['name']) ??
-          '番茄用户';
-      profile = WenkuProfile(
-        id: id,
-        username: nickname,
-        nickname: nickname,
-        score: _intOf(data['score'] ?? data['coin']) ?? 0,
-        experience: _intOf(data['experience'] ?? data['level']) ?? 0,
-        rank: _stringOf(data['rank'] ?? data['user_rank']) ?? '',
-      );
-      final prefs = preferences ??= await SharedPreferences.getInstance();
-      await prefs.setString(_profileKey, jsonEncode(_profileToJson(profile!)));
-      notifyListeners();
-    } on FanqieException catch (failure) {
-      // 401/登录失效要清掉本地态，其它错误保留。
-      if (failure.code == 1004) {
-        await logout();
-      }
-      error = failure.message;
-      notifyListeners();
+    final result = await FanqieLogin.profile(api.cookie!);
+    switch (result.status) {
+      case FanqieProfileStatus.ok:
+        final web = result.profile!;
+        final nickname = web.name.isEmpty ? '番茄用户' : web.name;
+        profile = WenkuProfile(
+          id: int.tryParse(web.uid) ?? 0,
+          username: nickname,
+          nickname: nickname,
+          score: 0,
+          experience: 0,
+          rank: '',
+        );
+        final prefs = preferences ??= await SharedPreferences.getInstance();
+        await prefs.setString(
+          _profileKey,
+          jsonEncode(_profileToJson(profile!)),
+        );
+        error = null;
+        notifyListeners();
+      case FanqieProfileStatus.unauthenticated:
+        // 服务端明确说这条 Cookie 不算数了，才清本地态。
+        await _forgetSession();
+        error = '番茄不认这条登录态，请重新登录';
+        notifyListeners();
+      case FanqieProfileStatus.unavailable:
+        // 网络问题。不动本地态，也不写 error —— 下次进来会再试。
+        break;
     }
   }
 
   @override
   Future<void> logout() async {
+    await FanqieLogin.logout();
     api.cookie = null;
     final prefs = preferences ??= await SharedPreferences.getInstance();
     await prefs.remove(_cookieKey);
     await prefs.remove(_profileKey);
     await super.logout();
+  }
+
+  /// 只清本地登录态，不碰 WebView 里的 cookie。
+  ///
+  /// `logout()` 会连原生 CookieManager 一起清；而这里要覆盖的场景是
+  /// 「本地存的这条不算数了」，用户可能马上要换一条登进来，不该顺手把
+  /// 浏览器里的登录也清掉。
+  Future<void> _forgetSession() async {
+    api.cookie = null;
+    authenticated = false;
+    profile = null;
+    final prefs = preferences ??= await SharedPreferences.getInstance();
+    await prefs.remove(_cookieKey);
+    await prefs.remove(_profileKey);
   }
 
   void _restoreProfile(String? raw) {

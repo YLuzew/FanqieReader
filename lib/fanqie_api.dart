@@ -71,6 +71,8 @@ abstract final class FanqieEndpoints {
   static const directory = '/reading/bookapi/directory/v/';
   static const content = '/reading/reader/full/v/';
   static const search = '/reading/bookapi/search/page/v/';
+  static const categoryLanding = '/reading/bookapi/new_category/landing/v/';
+  static const categoryList = '/reading/bookapi/category/list/v/';
 
   /// 书架/历史/进度走的是 api5-normal-*，不是正文那台网关。
   /// 路径取自 fqapp 的 account_library.rs（官方 App 的 RPC 反查）。
@@ -478,6 +480,137 @@ class FanqieApi {
     return Map<String, Object?>.from(data);
   }
 
+  /// 书名搜索。
+  ///
+  /// 网页版的 `/api/reader/*` 对未登录只回空 body，但 App 网关的
+  /// `search/page/v/` 实测能出结果（不需要 Cookie，签名走 device_id）。
+  /// 返回的是 cell 数组：每格 `book_data[0]` 才是书对象，`book_data` 为空
+  /// 的格子是广告位或聚合卡片，直接跳过。
+  ///
+  /// 这几个参数看着怪但都是必需的：`device_type=Honor10`、`os_version=0`、
+  /// `version_code=66.9` —— 换成新版号或真实机型会被判非法请求。
+  Future<List<Map<String, Object?>>> searchBooks(
+    String keyword, {
+    int offset = 0,
+    int count = 10,
+  }) async {
+    final word = keyword.trim();
+    if (word.isEmpty) return const [];
+    final query = 'query=${Uri.encodeQueryComponent(word)}'
+        '&offset=$offset'
+        '&count=$count'
+        '&aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&channel=0'
+        '&device_platform=android'
+        '&device_id=${session.deviceId}'
+        '&device_type=Honor10'
+        '&os_version=0'
+        '&version_code=66.9';
+    final bytes = await _appGet(FanqieEndpoints.search, query);
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return const [];
+    final code = decoded['code'];
+    if (code is int && code != 0) {
+      throw FanqieException(
+        '搜索接口返回 $code',
+        detail: '${decoded['message'] ?? ''}',
+      );
+    }
+    final data = decoded['data'];
+    if (data is! List) return const [];
+    final out = <Map<String, Object?>>[];
+    for (final cell in data) {
+      if (cell is! Map) continue;
+      final books = cell['book_data'];
+      if (books is! List || books.isEmpty) continue;
+      final book = books.first;
+      if (book is Map) out.add(Map<String, Object?>.from(book));
+    }
+    return out;
+  }
+
+  /// 题材大类。
+  ///
+  /// 只有一层，13 个，内容固定：现代都市 / 异世玄幻 / 官场职场 / 魔法奇幻 /
+  /// 武侠世界 / 仙侠修真 / 历史穿越 / 军事战争 / 悬疑灵异 / 科幻末世 /
+  /// 游戏电竞 / 体育竞技 / 二次元。没有子分类接口 —— 细分标签（法医、斩神
+  /// 这种）是分类落地页 `data.category` 里的单项，不是一棵树。
+  Future<List<FanqieCategory>> fetchCategoryList() async {
+    final query = 'aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&channel=0'
+        '&device_platform=android'
+        '&device_id=${session.deviceId}'
+        '&device_type=Honor10'
+        '&os_version=0'
+        '&version_code=69132'
+        '&update_version_code=69132'
+        '&manifest_version_code=69132'
+        '&version_name=6.9.1.32';
+    final bytes = await _appGet(FanqieEndpoints.categoryList, query);
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return const [];
+    final data = decoded['data'];
+    if (data is! List) return const [];
+    return [
+      for (final entry in data)
+        if (entry is Map)
+          FanqieCategory(
+            id: _int(entry['id']) ?? 0,
+            name: _string(entry['name']) ?? '',
+          ),
+    ];
+  }
+
+  /// 分类落地页。
+  ///
+  /// 书目在 `data.book_info`（不是 book_list），筛选维度在 `data.rule`：
+  ///   sort_by     综合 0 / 热门 24 / 最新 76 / 评分 12
+  ///   word_type   全部 0 / 100 万字以下 1 / 100-300 万 2 / 300 万以上 3
+  ///   book_status 全部 2 / 完结 0 / 连载中 1 / 今日更新 3
+  /// [filters] 里的键直接拼进 query，签名会一起覆盖，不需要另做处理。
+  Future<Map<String, Object?>> fetchCategory({
+    required int categoryId,
+    int gender = 0,
+    int genreType = 0,
+    int offset = 0,
+    int limit = 100,
+    Map<String, String> filters = const {},
+  }) async {
+    final extra = filters.entries.map((e) => '&${e.key}=${e.value}').join();
+    final query = 'category_id=$categoryId'
+        '&gender=$gender'
+        '&genre_type=$genreType'
+        '&offset=$offset'
+        '&limit=$limit'
+        '&page_version=1'
+        '$extra'
+        '&aid=${FanqieEndpoints.aid}'
+        '&app_name=${FanqieEndpoints.appName}'
+        '&channel=0'
+        '&device_platform=android'
+        '&device_id=${session.deviceId}'
+        '&device_type=Honor10'
+        '&os_version=0'
+        '&version_code=69132'
+        '&update_version_code=69132'
+        '&manifest_version_code=69132'
+        '&version_name=6.9.1.32';
+    final bytes = await _appGet(FanqieEndpoints.categoryLanding, query);
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return const {};
+    final code = decoded['code'];
+    if (code is int && code != 0) {
+      throw FanqieException(
+        '分类接口返回 $code',
+        detail: '${decoded['message'] ?? ''}',
+      );
+    }
+    final data = decoded['data'];
+    return data is Map ? Map<String, Object?>.from(data) : const {};
+  }
+
   /// 取封面图。
   ///
   /// 番茄的封面是签名 URL（byteimg 的 CDN），直接 GET 就行，不需要 cookie
@@ -819,6 +952,54 @@ class FanqieBook {
       lastChapterTitle: _string(raw['lastChapterTitle']) ?? '',
     );
   }
+
+  /// App 网关那一套接口（搜索 / 分类 / 书架）用的是 snake_case，
+  /// 跟网页版 SSR 的 camelCase 不是一个命名，所以单独一支解析。
+  static FanqieBook? fromAppJson(Object? raw) {
+    if (raw is! Map) return null;
+    final id = _string(raw['book_id']);
+    final title = _string(raw['book_name']);
+    if (id == null || title == null) return null;
+    return FanqieBook(
+      id: id,
+      title: title,
+      author: _string(raw['author']) ?? '佚名',
+      summary: _string(raw['abstract']) ?? '',
+      coverUrl: appCoverUrl(_string(raw['thumb_url'])),
+      chapterCount: _int(raw['serial_count']) ?? 0,
+      wordCount: _int(raw['word_number']) ?? 0,
+      // 和网页版一致：0 = 已完结，1 = 连载中。
+      completed: (_int(raw['creation_status']) ?? 1) == 0,
+      category: _string(raw['category']) ?? '',
+      lastChapterTitle:
+          _string(raw['last_chapter_title']) ??
+          _string(raw['first_chapter_title']) ??
+          '',
+    );
+  }
+
+  /// 把带签名、几小时就过期的封面地址换成长效的那条。
+  ///
+  /// 网关回的是
+  /// `https://p3-reading-sign.fqnovelpic.com/novel-pic/<hash>~tplv-....image?x-signature=...`
+  /// 去掉 `~` 之后的部分、换到 `p6-novel.byteimg.com/origin` 就是同一张图，
+  /// 而且不带签名不会过期（实测两张都 200）。
+  static String appCoverUrl(String? url) {
+    if (url == null || url.isEmpty) return '';
+    final marker = url.indexOf('/novel-pic/');
+    if (marker < 0) return url;
+    final cut = url.indexOf('~', marker);
+    final tail = url.substring(marker, cut < 0 ? url.length : cut);
+    return 'https://p6-novel.byteimg.com/origin$tail';
+  }
+}
+
+/// 一个题材大类。
+class FanqieCategory {
+  const FanqieCategory({required this.id, required this.name});
+
+  final int id;
+  final String name;
 }
 
 /// 目录里的一章。

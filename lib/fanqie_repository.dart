@@ -71,16 +71,35 @@ class FanqieRepository extends NovelRepository
 
   /// 搜索。
   ///
-  /// 番茄的网页版搜索对未登录请求返回空 body，所以这里只做一件事：
-  /// 如果输入看起来是书号或书籍链接，直接把它当 id 打开。
+  /// 两条路：输入像书号 / 书籍链接就直接开那本书（省一次搜索）；
+  /// 否则走 App 网关的 `search/page/v/`。
   @override
   Future<List<Novel>> search(String query) async {
-    final remote = _bookIdFromInput(query);
-    if (remote == null) return const [];
-    final key = '$remote';
-    final localId = await ids.localIdFor(key);
-    final novel = await _fetch(key, localId);
-    return novel == null ? const [] : [novel];
+    final word = query.trim();
+    if (word.isEmpty) return const [];
+    final remote = _bookIdFromInput(word);
+    if (remote != null) {
+      final key = '$remote';
+      final localId = await ids.localIdFor(key);
+      final novel = await _fetch(key, localId);
+      return novel == null ? const [] : [novel];
+    }
+    final hits = await api.searchBooks(word, count: 20);
+    return _novelsFromApp(hits);
+  }
+
+  /// 搜索结果 / 分类列表都是 App 网关的 snake_case 书对象，统一在这里转。
+  Future<List<Novel>> _novelsFromApp(
+    List<Map<String, Object?>> raw,
+  ) async {
+    final out = <Novel>[];
+    for (final entry in raw) {
+      final book = FanqieBook.fromAppJson(entry);
+      if (book == null) continue;
+      final localId = await ids.localIdFor(book.id);
+      out.add(_toNovel(book, localId));
+    }
+    return out;
   }
 
   /// 带分类的搜索。
@@ -191,6 +210,12 @@ class FanqieRepository extends NovelRepository
     bool refresh = false,
   }) async => const NovelPage(items: [], page: 1);
 
+  /// 按题材大类翻页。
+  ///
+  /// `tag` 传的是分类 id（1..13），可以带 `#` 前缀 —— 搜索页把
+  /// 「#现代都市」这种输入当标签用，这里把 `#` 剥掉再解析。
+  /// 子分类（法医、斩神那种）没有独立的树，只有落地页里的单项，
+  /// 所以认不出来的 tag 直接回空页，不猜。
   @override
   Future<NovelPage> tagPage(
     String tag, {
@@ -198,7 +223,23 @@ class FanqieRepository extends NovelRepository
     bool refresh = false,
     bool Function()? current,
     TagProgressCallback? onProgress,
-  }) async => const NovelPage(items: [], page: 1);
+  }) async {
+    final categoryId = int.tryParse(tag.replaceAll('#', '').trim());
+    if (categoryId == null || categoryId <= 0) {
+      return const NovelPage(items: [], page: 1);
+    }
+    final data = await api.fetchCategory(
+      categoryId: categoryId,
+      offset: (page - 1) * 100,
+    );
+    final raw = data['book_info'];
+    if (raw is! List) return const NovelPage(items: [], page: 1);
+    final items = await _novelsFromApp([
+      for (final entry in raw)
+        if (entry is Map) Map<String, Object?>.from(entry),
+    ]);
+    return NovelPage.fromItems(items, page);
+  }
 
   /// 按本地标识取一本书的详情与目录，并写进缓存。
   ///
