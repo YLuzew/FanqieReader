@@ -125,8 +125,8 @@ class MyPage extends StatelessWidget {
                             children: [
                               AppText(
                                 account?.authenticated == true
-                                    ? profile?.displayName ?? '文库账号'
-                                    : '登录文库账号',
+                                    ? profile?.displayName ?? '番茄账号'
+                                    : '登录番茄账号',
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w600,
@@ -137,14 +137,14 @@ class MyPage extends StatelessWidget {
                                 account?.authenticated == true
                                     ? profile == null
                                           ? '账号已连接'
-                                          : '${profile.score} 积分 · ${profile.rank}${features?.shelfSync == null
+                                          : '已登录番茄${features?.shelfSync == null
                                                 ? ''
                                                 : features!.shelfSync!.syncing
                                                 ? '\n书架正在同步'
                                                 : features.shelfSync!.error != null
                                                 ? '\n书架待同步 · ${features.shelfSync!.error}'
                                                 : features.shelfSync!.syncedAt != null
-                                                ? '\n书架已与文库同步'
+                                                ? '\n书架已与番茄同步'
                                                 : ''}'
                                     : '番茄阅读账号 · 云书架与每日签到',
                                 style: TextStyle(

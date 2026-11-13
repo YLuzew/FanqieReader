@@ -183,8 +183,7 @@ class WenkuAccountPage extends StatefulWidget {
 
 class _WenkuAccountPageState extends State<WenkuAccountPage> {
   final _username = TextEditingController();
-  final _password = TextEditingController();
-  bool _obscure = true;
+  bool _pasteCookie = false;
   @override
   void initState() {
     super.initState();
@@ -196,7 +195,6 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
   @override
   void dispose() {
     _username.dispose();
-    _password.dispose();
     super.dispose();
   }
 
@@ -214,10 +212,14 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
   Future<void> _login() async {
     final account = widget.account;
     if (account.busy) return;
+    if (_username.text.trim().isEmpty) {
+      showNovelFeedback(context, '先粘贴一条 Cookie');
+      return;
+    }
     final revision = account.sessionRevision;
     FocusManager.instance.primaryFocus?.unfocus();
     try {
-      await account.login(_username.text, _password.text);
+      await account.login(_username.text, '');
       if (mounted) showNovelFeedback(context, '登录成功');
     } catch (_) {
       // The account's live region displays the concrete failure.
@@ -229,8 +231,22 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
           shouldSave:
               account.authenticated && account.sessionRevision != revision,
         );
-        _password.clear();
+        if (account.authenticated) _username.clear();
       }
+    }
+  }
+
+  Future<void> _loginInWebView() async {
+    final account = widget.account;
+    if (account.busy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    try {
+      await account.loginInWebView();
+      if (mounted && account.authenticated) {
+        showNovelFeedback(context, '登录成功');
+      }
+    } catch (_) {
+      // The account's live region displays the concrete failure.
     }
   }
 
@@ -255,8 +271,8 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
         final account = widget.account;
         final profile = account.profile;
         return ArchiveFeaturePage(
-          title: '文库账号',
-          code: 'ACCOUNT / PERSONAL ARCHIVE',
+          title: '番茄账号',
+          code: 'ACCOUNT / TOMATO READER',
           child: LoadedContentSequence(
             generation: (account.authenticated, profile?.id),
             child: ListView(
@@ -268,7 +284,7 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                   child: AppText(
                     account.authenticated
                         ? profile?.displayName ?? '已登录'
-                        : '连接你的文库',
+                        : '连接番茄',
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w600,
@@ -279,7 +295,7 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                 AppText(
                   account.authenticated
                       ? '登录后自动同步收藏，本机阅读进度与原书保留。'
-                      : '使用原版文库账号。未登录时仍可搜索、收藏到本机和离线阅读。',
+                      : '用番茄账号登录后同步书架。登录在番茄自己的页面完成，密码不经过本应用。',
                 ),
                 const SizedBox(height: 24),
                 if (!account.authenticated)
@@ -287,64 +303,45 @@ class _WenkuAccountPageState extends State<WenkuAccountPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        TextField(
-                          key: const ValueKey('account-username'),
-                          onTap: () =>
-                              AppHaptics.play(context, HapticCue.selection),
-                          onTapAlwaysCalled: true,
-                          controller: _username,
-                          enabled: !account.busy,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          textInputAction: TextInputAction.next,
-                          autofillHints: const [AutofillHints.username],
-                          maxLength: 254,
-                          decoration: InputDecoration(
-                            labelText: appText(context, '用户名 / 邮箱'),
-                            hintText: appText(context, '请输入用户名或邮箱'),
-                            counterText: '',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          key: const ValueKey('account-password'),
-                          onTap: () =>
-                              AppHaptics.play(context, HapticCue.selection),
-                          onTapAlwaysCalled: true,
-                          controller: _password,
-                          enabled: !account.busy,
-                          obscureText: _obscure,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          keyboardType: TextInputType.visiblePassword,
-                          textInputAction: TextInputAction.done,
-                          autofillHints: const [AutofillHints.password],
-                          smartDashesType: SmartDashesType.disabled,
-                          smartQuotesType: SmartQuotesType.disabled,
-                          maxLength: 30,
-                          onSubmitted: (_) => _login(),
-                          decoration: InputDecoration(
-                            labelText: appText(context, '密码'),
-                            hintText: appText(context, '请输入密码'),
-                            counterText: '',
-                            suffixIcon: IconButton(
-                              tooltip: _obscure ? '显示密码' : '隐藏密码',
-                              icon: ArchiveIcon(
-                                _obscure
-                                    ? CupertinoIcons.eye
-                                    : CupertinoIcons.eye_slash,
-                              ),
-                              onPressed: () =>
-                                  setState(() => _obscure = !_obscure),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
                         GlassTextButton(
                           key: const ValueKey('account-login'),
-                          onPressed: account.busy ? null : _login,
-                          child: const AppText('登录'),
+                          onPressed: account.busy ? null : _loginInWebView,
+                          child: const AppText('用番茄账号登录'),
                         ),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: account.busy
+                              ? null
+                              : () => setState(
+                                  () => _pasteCookie = !_pasteCookie,
+                                ),
+                          child: AppText(
+                            _pasteCookie ? '收起手动导入' : '或粘贴 Cookie 手动导入',
+                          ),
+                        ),
+                        if (_pasteCookie) ...[
+                          const SizedBox(height: 8),
+                          TextField(
+                            key: const ValueKey('account-cookie'),
+                            controller: _username,
+                            enabled: !account.busy,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            minLines: 1,
+                            maxLines: 3,
+                            decoration: InputDecoration(
+                              labelText: appText(context, 'Cookie'),
+                              hintText: appText(context, 'sessionid=...'),
+                              counterText: '',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          GlassTextButton(
+                            key: const ValueKey('account-import'),
+                            onPressed: account.busy ? null : _login,
+                            child: const AppText('导入'),
+                          ),
+                        ],
                       ],
                     ),
                   )
@@ -860,7 +857,7 @@ class _PublicationLibraryPageState extends State<PublicationLibraryPage> {
     if (failure is PublicationConnectionRequired && widget.account != null) {
       return ContentNotice(
         icon: CupertinoIcons.person_crop_circle,
-        title: widget.account!.authenticated ? '出版分类暂时不可用' : '此分类需要文库账号',
+        title: widget.account!.authenticated ? '出版分类暂时不可用' : '此分类需要番茄账号',
         message: widget.account!.authenticated
             ? '已复用当前账号请求分类，但官网未接受这次会话。可稍后重试，账号与阅读记录仍保留。'
             : '登录后可读取官网出版分类。搜索和排行榜仍可直接使用。',
@@ -883,7 +880,7 @@ class _PublicationLibraryPageState extends State<PublicationLibraryPage> {
         icon: widget.account!.authenticated
             ? CupertinoIcons.arrow_clockwise
             : CupertinoIcons.person_crop_circle,
-        title: widget.account!.authenticated ? '分类暂未读取成功' : '此分类需要文库账号',
+        title: widget.account!.authenticated ? '分类暂未读取成功' : '此分类需要番茄账号',
         message: widget.account!.authenticated
             ? '账号连接正常，分类服务暂未返回书目。请稍后重新加载。'
             : '登录后可读取出版分类。最近更新、排行榜和搜索仍可直接使用。',
@@ -921,7 +918,7 @@ class _PublicationLibraryPageState extends State<PublicationLibraryPage> {
         ? (_error != null
               ? ContentNotice(
                   icon: CupertinoIcons.wifi_exclamationmark,
-                  title: '文库分类加载失败',
+                  title: '分类加载失败',
                   message: _error!,
                   onRetry: _load,
                 )
