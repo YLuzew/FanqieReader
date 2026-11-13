@@ -35,6 +35,9 @@ class ChapterDownload {
   bool cachingIllustrations = false;
   String? failedChapter;
 
+  /// 这次任务里跳过的章节。单章失败不该拖死整本，攒起来最后一起报。
+  final List<String> failedChapters = <String>[];
+
   /// 失败原因，直接拼进提示里。不这么做的话用户只看到「缓存失败」，
   /// 分不清是没网、章节锁了、还是签名被拒。
   String get _reason {
@@ -59,7 +62,9 @@ class ChapterDownload {
           ? '已缓存 $completed / $total 章 · 正在缓存插图'
           : '已缓存 $completed / $total 章',
     DownloadPhase.completed =>
-      '缓存完成 · $completed 章${illustrations > 0 ? ' · $illustrations 张插图' : ''}',
+      failedChapters.isEmpty
+          ? '缓存完成 · $completed 章${illustrations > 0 ? ' · $illustrations 张插图' : ''}'
+          : '缓存完成 · $completed 章 · 跳过 ${failedChapters.length} 章${_reason}',
     DownloadPhase.cancelled => '已取消 · 保留已缓存章节',
     DownloadPhase.failed =>
       failedChapter == null
@@ -469,12 +474,42 @@ class OfflineNovelRepository extends FrameChangeNotifier
     int id,
     NovelChapter chapter,
     _ChapterRequest request,
-  ) => request.response ??= () async {
+  ) async {
+    final cached = request.response;
+    if (cached != null) return cached;
+    final pending = _fetchUncached(id, chapter);
+    request.response = pending;
+    try {
+      return await pending;
+    } catch (error) {
+      // 失败的 Future 不能留在租约里 —— 留着的话同一章再也不会重新请求，
+      // 用户点「重试」也只是把上一次的异常原样再抛一遍。
+      if (identical(request.response, pending)) request.response = null;
+      rethrow;
+    }
+  }
+
+  /// 单章正文最多试 3 次，退避 600ms / 1200ms。番茄那边连续抓几十章之后
+  /// 偶尔会抽一次连接重置，重试一次基本就过，不该让整本书停下来。
+  Future<String> _fetchUncached(int id, NovelChapter chapter) async {
     if (offline) throw const FormatException('当前无网络连接，这一章尚未缓存');
-    final text = await remote.chapterContent(id, chapter);
-    if (text.trim().isEmpty) throw const FormatException('章节正文为空');
-    return text;
-  }();
+    Object? last;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final text = await remote.chapterContent(id, chapter);
+        if (text.trim().isEmpty) throw const FormatException('章节正文为空');
+        return text;
+      } catch (error) {
+        last = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 600 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw last!;
+  }
 
   @override
   Future<String> chapterContent(int novelId, NovelChapter chapter) async {
@@ -639,6 +674,13 @@ class OfflineNovelRepository extends FrameChangeNotifier
           if (!_current(job)) return;
           job.cachingIllustrations = false;
           job.completed++;
+          _changed(job.novel.id);
+        } catch (error) {
+          if (!_current(job)) return;
+          // 一章失败不该拖死整本：记下来，跳过它，把剩下的缓存完。
+          job.failedChapters.add(chapter.title);
+          job.error ??= error;
+          debugPrint('[cache] 跳过「${chapter.title}」：$error');
           _changed(job.novel.id);
         } finally {
           _releaseRequest(request);
