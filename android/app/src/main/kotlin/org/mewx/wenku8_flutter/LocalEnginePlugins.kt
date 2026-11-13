@@ -13,15 +13,11 @@ import io.flutter.plugin.common.PluginRegistry
 /** Source builds attach local platform capabilities only. */
 internal fun attachWenkuEnginePlugins(engine: FlutterEngine) {
     if (!engine.plugins.has(ReadingWidgetsPlugin::class.java)) engine.plugins.add(ReadingWidgetsPlugin())
-    if (!engine.plugins.has(ListeningEnhancementPlugin::class.java)) engine.plugins.add(ListeningEnhancementPlugin())
     if (!engine.plugins.has(AppHapticsPlugin::class.java)) engine.plugins.add(AppHapticsPlugin())
     if (!engine.plugins.has(MonetPlugin::class.java)) engine.plugins.add(MonetPlugin())
-    if (!engine.plugins.has(LanReadingConfigPlugin::class.java)) engine.plugins.add(LanReadingConfigPlugin())
-    if (!engine.plugins.has(LanDiscoveryPlugin::class.java)) engine.plugins.add(LanDiscoveryPlugin())
     if (!engine.plugins.has(WenkuHostPlugin::class.java)) engine.plugins.add(WenkuHostPlugin())
     if (!engine.plugins.has(SystemSpeechPlugin::class.java)) engine.plugins.add(SystemSpeechPlugin())
     if (!engine.plugins.has(AppUpdatePlugin::class.java)) engine.plugins.add(AppUpdatePlugin())
-    if (!engine.plugins.has(CustomSpeechConfigPlugin::class.java)) engine.plugins.add(CustomSpeechConfigPlugin())
     if (!engine.plugins.has(CloudSourceConfigPlugin::class.java)) engine.plugins.add(CloudSourceConfigPlugin())
     if (!engine.plugins.has(ReaderControlsPlugin::class.java)) engine.plugins.add(ReaderControlsPlugin())
     if (!engine.plugins.has(NetworkStatusPlugin::class.java)) engine.plugins.add(NetworkStatusPlugin())

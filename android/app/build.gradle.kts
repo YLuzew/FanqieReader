@@ -33,7 +33,7 @@ android {
     defaultConfig {
         // Public source previews must not replace an installed distribution.
         applicationId = "org.mewx.wenku8_flutter.source_preview"
-        minSdk = flutter.minSdkVersion
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
