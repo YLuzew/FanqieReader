@@ -10,12 +10,13 @@ Future<LocalScanResult> scanLocalBooks({
   required BookScanSnapshot snapshot,
   required Set<String> selectedTokens,
   required bool linkText,
-  required Future<Object?> Function(String source) importSource,
+  required Future<LocalImportReport> Function(BookDocumentSelection source)
+  importSource,
   required bool Function() current,
   void Function(int done, int total)? onProgress,
 }) async {
   final result = LocalScanResult(
-    report: null,
+    report: const LocalImportReport(summary: '此构建未包含本地批量导入'),
     total: snapshot.total,
     unchanged: snapshot.unchanged,
     warnings: const ['此构建未包含本地批量导入'],

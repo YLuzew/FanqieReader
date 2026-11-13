@@ -20,6 +20,18 @@ class CustomSpeechConfig {
   bool get isConfigured =>
       namespace.isNotEmpty && voiceId.isNotEmpty && locale.isNotEmpty;
 
+  /// 这份配置对应的音色。
+  ///
+  /// 三项必须与缓存里的 voice 完全一致，否则缓存会被判为失效
+  /// （listening/cache.dart:194-197 逐项比对 engine / id / locale）。
+  SpeechVoice get voice => SpeechVoice(
+    id: voiceId,
+    label: voiceId.isEmpty ? '自定义语音' : voiceId,
+    source: ListeningSource.custom,
+    locale: locale.isEmpty ? 'zh-CN' : locale,
+    engine: namespace.isEmpty ? null : namespace,
+  );
+
   CustomSpeechConfig copyWith({
     String? namespace,
     String? voiceId,

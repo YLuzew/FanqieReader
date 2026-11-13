@@ -42,19 +42,19 @@ class PortableBookPreparer {
   }
 
   Future<List<PreparedBookDocument>> prepare(
-    List<String> paths, {
+    String name,
+    String path, {
     void Function(int done, int total)? onProgress,
   }) async {
-    final docs = <PreparedBookDocument>[];
-    for (var i = 0; i < paths.length; i++) {
-      try {
-        docs.addAll(await convert(_basename(paths[i]), paths[i]));
-      } catch (error) {
-        docs.add((name: _basename(paths[i]), path: null, error: '$error'));
-      }
-      onProgress?.call(i + 1, paths.length);
+    onProgress?.call(0, 1);
+    try {
+      final docs = await convert(name, path);
+      onProgress?.call(1, 1);
+      return docs;
+    } catch (error) {
+      onProgress?.call(1, 1);
+      return [(name: name, path: null, error: '$error')];
     }
-    return docs;
   }
 
   /// 释放某个文档在这次运行里占用的临时路径。

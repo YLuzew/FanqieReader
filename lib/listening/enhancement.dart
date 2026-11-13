@@ -32,7 +32,10 @@ class ListeningEnhancement {
 
   bool get active => false;
 
-  Future<void> configure(ListeningEnhancementPreference value) async {
+  Future<void> configure(
+    ListeningEnhancementPreference value, {
+    int? audioSessionId,
+  }) async {
     preference = value;
   }
 

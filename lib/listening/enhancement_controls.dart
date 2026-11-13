@@ -10,7 +10,7 @@ class ListeningEnhancementSettings extends StatelessWidget {
     required this.onChanged,
   });
 
-  final ListeningEnhancementPreference enhancement;
+  final ListeningEnhancement enhancement;
   final ValueChanged<ListeningEnhancementPreference> onChanged;
 
   @override

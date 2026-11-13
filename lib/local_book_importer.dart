@@ -357,6 +357,24 @@ class LocalBookImporter extends ChangeNotifier {
         return registerImported(imported, categories: categories);
       }
 
+      /// 逐个文件导入选中的本地文档。
+      ///
+      /// 当前构建未包含原生批量导入实现，直接回一份空报告；
+      /// 回调签名完整保留，日后接回原生实现时调用方不用改。
+      Future<LocalImportReport> importLocalDocuments({
+        required List<BookDocumentSelection> selections,
+        Object? documents,
+        Object? books,
+        Future<Novel> Function(String name, String path)? importFile,
+        Future<Novel> Function(BookDocumentSelection selected)? importSelection,
+        bool releaseSources = false,
+        void Function(Iterable<BookDocumentSelection>)? onCleanupFailed,
+        void Function(int done, int total)? onProgress,
+      }) async {
+        onProgress?.call(selections.length, selections.length);
+        return const LocalImportReport(summary: '此构建未包含本地文档导入');
+      }
+
       Future<LocalImportReport> importPrepared(
         List<BookDocumentSelection> sources, {
         bool updateProgress = true,

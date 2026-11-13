@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'local_books.dart';
+
 /// 导入过程中需要告知用户的一条说明（旧格式、缺封面等）。
 typedef LocalImportNotice = ({String name, String message});
 
@@ -27,6 +29,94 @@ class LocalImportReport {
   bool get isEmpty => added == 0 && failures.isEmpty;
 }
 
+/// 一张「合订本里的某一卷」。
+@immutable
+class LocalImportVolume {
+  const LocalImportVolume({
+    required this.bookId,
+    required this.title,
+    this.chapterCount = 0,
+  });
+
+  final int bookId;
+  final String title;
+  final int chapterCount;
+}
+
+/// 一组合并候选：同一部作品拆成多卷的书。
+@immutable
+class LocalImportGroup {
+  const LocalImportGroup({
+    required this.seed,
+    required this.title,
+    required this.volumes,
+    this.needsTarget = false,
+    this.targetId,
+  });
+
+  /// 代表这本书的 id（也是 UI 里的选择键）。
+  final int seed;
+  final String title;
+  final List<LocalImportVolume> volumes;
+
+  /// 该组还不能直接合并，需要用户先指定目标合订本。
+  final bool needsTarget;
+
+  /// 已经归属的合订本 id；null 表示要新建一个。
+  final int? targetId;
+}
+
+/// 把导入结果按「同系列」归并成合并候选。
+///
+/// 已经在某个系列里的书归到同组并带上 [LocalImportGroup.targetId]；
+/// 其余每本单独成组，等待用户指定目标。
+List<LocalImportGroup> localImportGroups(
+  LocalBookStore books,
+  List<int> bookIds,
+) {
+  final grouped = <int, List<int>>{};
+  final standalone = <LocalImportGroup>[];
+
+  for (final id in bookIds) {
+    final book = books.book(id);
+    if (book == null) continue;
+    final series = books.seriesFor(id);
+    if (series == null) {
+      standalone.add(
+        LocalImportGroup(
+          seed: id,
+          title: book.title,
+          volumes: [
+            LocalImportVolume(bookId: id, title: book.title),
+          ],
+          needsTarget: true,
+        ),
+      );
+    } else {
+      (grouped[series.id] ??= <int>[]).add(id);
+    }
+  }
+
+  final result = <LocalImportGroup>[];
+  for (final entry in grouped.entries) {
+    final members = entry.value.map((id) => books.book(id)).whereType<Novel>();
+    final list = members.toList();
+    if (list.isEmpty) continue;
+    result.add(
+      LocalImportGroup(
+        seed: entry.key,
+        title: list.first.title,
+        volumes: [
+          for (final book in list)
+            LocalImportVolume(bookId: book.id, title: book.title),
+        ],
+        targetId: entry.key,
+      ),
+    );
+  }
+  return [...result, ...standalone];
+}
+
 /// 一次本地扫描的汇总结果。
 class LocalScanResult {
   const LocalScanResult({
@@ -37,11 +127,17 @@ class LocalScanResult {
     this.pending = 0,
   });
 
-  final Object? report;
+  final LocalImportReport report;
   final int total;
   final int unchanged;
   final List<String> warnings;
   final int pending;
+
+  String get summary => report.summary.isNotEmpty
+      ? report.summary
+      : (report.added > 0
+            ? '已导入 ${report.added} 本'
+            : '本次没有新增书籍');
 
   bool get isEmpty => total == 0 && pending == 0;
 }
@@ -58,7 +154,8 @@ class LocalImportBatch extends ChangeNotifier {
   bool _cancelled = false;
   bool get cancelled => _cancelled;
 
-  Future<Object?> run(List<String> tokens) async => null;
+  Future<LocalImportReport?> run(List<String> tokens) async =>
+      const LocalImportReport(summary: '此构建未包含批量导入');
 
   void cancel() {
     _cancelled = true;
@@ -70,36 +167,4 @@ class LocalImportBatch extends ChangeNotifier {
     _cancelled = true;
     super.dispose();
   }
-}
-
-/// 批量导入的分组视图（按文件夹归并）。
-class LocalImportGroup {
-  const LocalImportGroup({
-    required this.folder,
-    this.tokens = const [],
-    this.total = 0,
-  });
-
-  final String folder;
-  final List<String> tokens;
-  final int total;
-}
-
-List<LocalImportGroup> localImportGroups(
-  Iterable<String> tokens, {
-  String Function(String token)? folderOf,
-}) {
-  final grouped = <String, List<String>>{};
-  for (final token in tokens) {
-    final folder = folderOf?.call(token) ?? '';
-    (grouped[folder] ??= <String>[]).add(token);
-  }
-  return [
-    for (final entry in grouped.entries)
-      LocalImportGroup(
-        folder: entry.key,
-        tokens: List.unmodifiable(entry.value),
-        total: entry.value.length,
-      ),
-  ];
 }

@@ -29,7 +29,7 @@ class ReadingDesktopCard extends StatelessWidget {
   final ReadingDesktopSize size;
   final Brightness brightness;
   final String? quoteText;
-  final String quoteSource;
+  final String? quoteSource;
   final int quoteCount;
 
   @override

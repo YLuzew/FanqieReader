@@ -16,7 +16,7 @@ class ReadingReportPage extends StatelessWidget {
     this.initialRange,
   });
 
-  final ReaderState state;
+  final LibraryState state;
   final NovelRepository repository;
   final DateTime? now;
   final ReadingReportRange? initialRange;
