@@ -1313,7 +1313,17 @@ class DiscoverPage extends StatelessWidget {
     );
   }
 
-  String get _lowerCategory =>
+  String get _lowerCategory {
+    // 番茄选了筛选之后，这行必须跟着变 —— 不然顶上一律「最近更新」，
+    // 用户看不出自己筛没筛。
+    if (fanqieRepositoryOf(repository) case final fanqie?
+        when fanqie.filterActive) {
+      return '${fanqie.filterCategoryName} · ${fanqie.filterSortLabel}';
+    }
+    return _lowerCategoryFallback;
+  }
+
+  String get _lowerCategoryFallback =>
       categoryTitle ??
       feed?.publication?.name ??
       (feed?.tags.isNotEmpty == true

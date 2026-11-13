@@ -295,6 +295,14 @@ class FanqieRepository extends NovelRepository
   }
 
   /// 套用筛选。三个参数都传当前值，`active` 由调用方决定。
+  /// 顶栏那行要显示的名字 —— sort_by 是数字，得翻回来。
+  String get filterSortLabel => switch (filterSortBy) {
+    '24' => '热门',
+    '76' => '最新',
+    '12' => '评分',
+    _ => '综合',
+  };
+
   void applyFilter({
     int? categoryId,
     String? categoryName,
