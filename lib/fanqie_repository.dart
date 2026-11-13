@@ -84,8 +84,18 @@ class FanqieRepository extends NovelRepository
       final novel = await _fetch(key, localId);
       return novel == null ? const [] : [novel];
     }
-    final hits = await api.searchBooks(word, count: 20);
-    return _novelsFromApp(hits);
+    // 一次能拿 99 条（服务端实际少给 1 条），比以前 10 条宽得多。
+    final hits = await api.searchBooks(word, count: 99);
+    final novels = await _novelsFromApp(hits);
+    // 搜索词正好是某位作者的名字时，把这位作者自己的书提到最前面。
+    // 番茄的搜索是「书名 + 作者 + 标签」混排，搜作者名会混进别人的书 ——
+    // 不排序的话，看起来就像「搜作者出来的全是书、真要找的那位反而埋在后面」。
+    final own = novels.where((book) => sameNovelAuthor(book.author, word)).toList();
+    if (own.isEmpty || own.length == novels.length) return novels;
+    return [
+      ...own,
+      ...novels.where((book) => !sameNovelAuthor(book.author, word)),
+    ];
   }
 
   /// 搜索结果 / 分类列表都是 App 网关的 snake_case 书对象，统一在这里转。

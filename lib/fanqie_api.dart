@@ -70,7 +70,18 @@ abstract final class FanqieEndpoints {
   static const bookDetail = '/reading/bookapi/multi-detail/v/';
   static const directory = '/reading/bookapi/directory/v/';
   static const content = '/reading/reader/full/v/';
+  /// 老的搜索入口，一次最多 10 条、`count` 传大也没用。
   static const search = '/reading/bookapi/search/page/v/';
+
+  /// 真正的搜索结果页：分 tab，`tab_type` 3 = 书籍、1 = 综合（作者卡混在里面）。
+  /// 一次能拿 99 条，`offset` 用返回的 `next_offset` 往下翻。
+  static const searchTab = '/reading/bookapi/search/tab/v';
+
+  /// `searchTab` 只在 api5-normal-sinfonlineb 上，别的 host 会 404。
+  /// 注意这里是**不带 scheme 的主机名** —— `_appGet` 自己拼 `https://`，
+  /// 多写一个 `https://` 会拼成 `https://https://...`，报
+  /// `Failed host lookup: 'https'`。
+  static const shelfHost = 'api5-normal-sinfonlineb.fqnovel.com';
   static const categoryLanding = '/reading/bookapi/new_category/landing/v/';
   static const categoryList = '/reading/bookapi/category/list/v/';
 
@@ -492,24 +503,104 @@ class FanqieApi {
   Future<List<Map<String, Object?>>> searchBooks(
     String keyword, {
     int offset = 0,
+    int count = 19,
+  }) async {
+    final tab = await _searchTab(keyword, tabType: 3, offset: offset, count: count);
+    final out = <Map<String, Object?>>[];
+    for (final cell in tab.data) {
+      final books = cell['book_data'];
+      if (books is! List || books.isEmpty) continue;
+      final book = books.first;
+      if (book is Map) out.add(Map<String, Object?>.from(book));
+    }
+    return out;
+  }
+
+  /// 综合 tab 里的作者卡。搜「金色米粒」时第一条就是作者本身，
+  /// 以前只解析 `book_data` 会把它当广告位丢掉，于是看起来「搜作者出来的全是书」。
+  Future<List<FanqieAuthor>> searchAuthors(
+    String keyword, {
     int count = 10,
   }) async {
+    final tab = await _searchTab(keyword, tabType: 1, offset: 0, count: count);
+    final out = <FanqieAuthor>[];
+    for (final cell in tab.data) {
+      if (cell['show_type'] != 132) continue;
+      final name = cell['cell_name'];
+      if (name is! String || name.trim().isEmpty) continue;
+      final users = cell['search_user_data'];
+      String userId = '';
+      String? avatar;
+      if (users is List && users.isNotEmpty && users.first is Map) {
+        final user = users.first as Map;
+        userId = '${user['user_id'] ?? ''}';
+        final pic = user['user_avatar'];
+        if (pic is String && pic.isNotEmpty) avatar = pic;
+      }
+      out.add(FanqieAuthor(name: name.trim(), userId: userId, avatarUrl: avatar));
+    }
+    return out;
+  }
+
+  Future<_FanqieSearchTab> _searchTab(
+    String keyword, {
+    required int tabType,
+    required int offset,
+    required int count,
+  }) async {
     final word = keyword.trim();
-    if (word.isEmpty) return const [];
-    final query = 'query=${Uri.encodeQueryComponent(word)}'
+    if (word.isEmpty) return const _FanqieSearchTab.empty();
+    final query =
+        'bookshelf_search_plan=4'
         '&offset=$offset'
+        '&user_is_login=1'
+        '&bookstore_tab=2'
+        '&passback='
+        '&query=${Uri.encodeQueryComponent(word)}'
         '&count=$count'
-        '&aid=${FanqieEndpoints.aid}'
-        '&app_name=${FanqieEndpoints.appName}'
-        '&channel=0'
-        '&device_platform=android'
+        '&search_source=1'
+        '&clicked_content=search_history'
+        '&use_lynx=false'
+        '&use_correct=true'
+        '&tab_type=$tabType'
+        '&tab_name=store'
+        '&pad_column_cover=0'
+        '&is_first_enter_search=false'
+        '&iid=${session.installId}'
         '&device_id=${session.deviceId}'
-        '&device_type=Honor10'
-        '&os_version=0'
-        '&version_code=66.9';
-    final bytes = await _appGet(FanqieEndpoints.search, query);
+        '&ac=wifi'
+        '&channel=xiaomi_1967_64'
+        '&aid=${FanqieEndpoints.aid}'
+        '&app_name=novelapp'
+        '&version_code=65132'
+        '&version_name=6.5.1.32'
+        '&device_platform=android'
+        '&os=android'
+        '&ssmix=a'
+        '&device_type=FRD-AL10'
+        '&device_brand=honor'
+        '&language=zh'
+        '&os_api=28'
+        '&os_version=9'
+        '&manifest_version_code=65132'
+        '&resolution=1080%2A1920'
+        '&dpi=480'
+        '&update_version_code=65132'
+        '&pv_player=65132'
+        '&gender=2'
+        '&need_personal_recommend=1'
+        '&player_so_load=1'
+        '&is_android_pad_screen=0'
+        '&host_abi=arm64-v8a'
+        '&dragon_device_type=phone'
+        '&compliance_status=0';
+    final bytes = await _appGet(
+      FanqieEndpoints.searchTab,
+      query,
+      host: FanqieEndpoints.shelfHost,
+    );
     final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
-    if (decoded is! Map) return const [];
+    if (decoded is! Map) return const _FanqieSearchTab.empty();
     final code = decoded['code'];
     if (code is int && code != 0) {
       throw FanqieException(
@@ -517,17 +608,26 @@ class FanqieApi {
         detail: '${decoded['message'] ?? ''}',
       );
     }
-    final data = decoded['data'];
-    if (data is! List) return const [];
-    final out = <Map<String, Object?>>[];
-    for (final cell in data) {
-      if (cell is! Map) continue;
-      final books = cell['book_data'];
-      if (books is! List || books.isEmpty) continue;
-      final book = books.first;
-      if (book is Map) out.add(Map<String, Object?>.from(book));
+    final tabs = decoded['search_tabs'];
+    if (tabs is! List) return const _FanqieSearchTab.empty();
+    for (final entry in tabs) {
+      if (entry is! Map) continue;
+      if (entry['tab_type'] != tabType) continue;
+      final data = entry['data'];
+      final cells = <Map<String, Object?>>[
+        if (data is List)
+          for (final cell in data)
+            if (cell is Map) Map<String, Object?>.from(cell),
+      ];
+      return _FanqieSearchTab(
+        cells,
+        hasMore: entry['has_more'] == true,
+        nextOffset: entry['next_offset'] is num
+            ? (entry['next_offset'] as num).toInt()
+            : null,
+      );
     }
-    return out;
+    return const _FanqieSearchTab.empty();
   }
 
   /// 题材大类。
@@ -995,6 +1095,33 @@ class FanqieBook {
 }
 
 /// 一个题材大类。
+class _FanqieSearchTab {
+  const _FanqieSearchTab(this.cells, {this.hasMore = false, this.nextOffset});
+  const _FanqieSearchTab.empty()
+    : cells = const [],
+      hasMore = false,
+      nextOffset = null;
+
+  final List<Map<String, Object?>> cells;
+  final bool hasMore;
+  final int? nextOffset;
+
+  List<Map<String, Object?>> get data => cells;
+}
+
+/// 搜索结果里的作者卡（综合 tab 里 `show_type == 132` 的那一条）。
+class FanqieAuthor {
+  const FanqieAuthor({
+    required this.name,
+    required this.userId,
+    this.avatarUrl,
+  });
+
+  final String name;
+  final String userId;
+  final String? avatarUrl;
+}
+
 class FanqieCategory {
   const FanqieCategory({required this.id, required this.name});
 
