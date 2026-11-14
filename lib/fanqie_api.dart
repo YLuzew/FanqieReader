@@ -703,9 +703,10 @@ class FanqieApi {
         Directory('${(await getApplicationSupportDirectory()).path}/fanqie-audio');
     final file = File('${root.path}/$bookId-$itemId-$toneId.mp4');
     if (await file.exists() && await file.length() > 1024) return file;
-    final response = await _client
+    final request = await _client
         .getUrl(Uri.parse(track.url))
         .timeout(const Duration(seconds: 60));
+    final response = await request.close();
     final builder = BytesBuilder(copy: false);
     await for (final chunk in response) {
       builder.add(chunk);
