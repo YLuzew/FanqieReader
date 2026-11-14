@@ -606,6 +606,8 @@ class FanqieApi {
   /// 参数取自 fqapp 的 `account_history.rs`：`limit=0` 表示「全给我」，
   /// `offset` 用响应里的 `next_offset` 往下翻。`last_min_read_timestamp_ms`
   /// 和 `is_first_load` 是官方 SDK 的默认值，漏了会被判参数错误。
+  ///
+  /// `full_field` 官方写死 `false` —— 传 `true` 服务端会当非法参数。
   Future<Map<String, Object?>?> fetchReadHistory({
     int offset = 0,
     bool isFirstLoad = true,
@@ -624,7 +626,7 @@ class FanqieApi {
         '&limit=0'
         '&offset=$offset'
         '&last_min_read_timestamp_ms=0'
-        '&full_field=true'
+        '&full_field=false'
         '&is_first_load=$isFirstLoad'
         '&query_soft_deleted=false';
     final decoded = await _appJson(
@@ -704,10 +706,11 @@ class FanqieApi {
     final response = await _client
         .getUrl(Uri.parse(track.url))
         .timeout(const Duration(seconds: 60));
-    final bytes = await response.close().fold<BytesBuilder>(
-      BytesBuilder(copy: false),
-      (builder, chunk) => builder..add(chunk),
-    );
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in response) {
+      builder.add(chunk);
+    }
+    final bytes = builder;
     var data = bytes.takeBytes();
     if (data.length < 4096) return null;
     if (track.encrypted) {

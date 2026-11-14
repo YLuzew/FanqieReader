@@ -235,7 +235,7 @@ class _FanqieListenPageState extends State<FanqieListenPage> {
                             : _player.play(),
                   icon: ArchiveIcon(
                     _playing
-                        ? CupertinoIcons.pause_circle_filled
+                        ? CupertinoIcons.pause_circle
                         : CupertinoIcons.play_circle_fill,
                     size: 52,
                   ),

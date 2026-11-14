@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:cryptography/cryptography.dart';
+import 'fanqie_sign.dart' show aesEncryptBlock;
 
 /// 番茄听书音轨的解密器。
 ///
@@ -118,8 +118,14 @@ class FanqieAudioCipher {
         w += 16;
       }
     }
-    final ecb = AesEcb(SecretKey(key));
-    final stream = await ecb.encrypt(plainCounters);
+    // 复用 fanqie_sign 里手写的 AES（单块 ECB），省一个依赖也省一次异步。
+    final stream = Uint8List(plainCounters.length);
+    final block = Uint8List(16);
+    for (var at = 0; at < plainCounters.length; at += 16) {
+      block.setRange(0, 16, plainCounters, at);
+      final enc = aesEncryptBlock(key, block);
+      stream.setRange(at, at + 16, enc);
+    }
 
     var so = 0;
     for (var i = 0; i < boxes.length; i++) {

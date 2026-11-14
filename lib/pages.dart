@@ -5100,7 +5100,7 @@ class _DetailPageState extends State<DetailPage> with TickerProviderStateMixin {
                       state: state,
                       localOnly: isLocalBook(novel.id),
                     ),
-                    reduceMotion: _reduceMotion,
+                    reduceMotion: widget.state.reduceMotion,
                     explorationKey: (
                       'author',
                       novel.author.trim(),
@@ -5882,7 +5882,7 @@ class _DetailPageState extends State<DetailPage> with TickerProviderStateMixin {
     try {
       await showJellySheet<void>(
         context: context,
-        reduceMotion: _reduceMotion,
+        reduceMotion: widget.state.reduceMotion,
         maxWidth: 720,
         builder: (_) => OfflineVolumeCacheSheet(
           repository: repository as OfflineNovelRepository,
@@ -11121,9 +11121,9 @@ class _ReaderPageState extends State<ReaderPage>
         book: _sourceBook,
         startChapter: _chapter,
         repository: fanqie,
-        reduceMotion: _reduceMotion,
+        reduceMotion: widget.state.reduceMotion,
       ),
-      reduceMotion: _reduceMotion,
+      reduceMotion: widget.state.reduceMotion,
       explorationKey: ('fanqie-audio', _sourceBook.id, false),
     );
   }
@@ -11163,7 +11163,7 @@ class _ReaderPageState extends State<ReaderPage>
     final total = counts.values.fold<int>(0, (sum, value) => sum + value);
     await showJellySheet<void>(
       context: context,
-      reduceMotion: _reduceMotion,
+      reduceMotion: widget.state.reduceMotion,
       heightFactor: .78,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -11208,7 +11208,7 @@ class _ReaderPageState extends State<ReaderPage>
                               quote: preview,
                               initialCount: entry.value,
                             ),
-                            reduceMotion: _reduceMotion,
+                            reduceMotion: widget.state.reduceMotion,
                             explorationKey: (
                               'fanqie-notes',
                               _sourceBook.id,

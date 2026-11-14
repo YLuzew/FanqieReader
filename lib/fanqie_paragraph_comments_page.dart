@@ -280,9 +280,9 @@ class _CommentTile extends StatelessWidget {
     );
   }
 
-  static String _ago(int seconds) {
-    if (seconds <= 0) return '';
-    final date = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+  static String _ago(DateTime? at) {
+    if (at == null) return '';
+    final date = at;
     final delta = DateTime.now().difference(date);
     if (delta.inMinutes < 1) return '刚刚';
     if (delta.inHours < 1) return '${delta.inMinutes} 分钟前';
