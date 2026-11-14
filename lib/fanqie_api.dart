@@ -639,6 +639,50 @@ class FanqieApi {
     final data = decoded['data'];
     return data is Map ? Map<String, Object?>.from(data) : null;
   }
+
+  /// 最近读过的书，按时间倒序，最多 [maxPages] 页。
+  ///
+  /// 字段名照 duongden/fqapp1 的 `models/fanqie_history.dart` 抄 —— 那边
+  /// 逐字段验过：`read_timestamp_ms` 是**毫秒**，`book_type` 只有 0 是书，
+  /// `is_delete` 为真的记录要丢，书号可能给 `book_id_str`（字符串）也可能
+  /// 给 `book_id`（数字）。**番茄不吐章节位置**，所以这里只带书和时间。
+  Future<List<FanqieHistoryEntry>> fetchRecentReads({int maxPages = 5}) async {
+    final auth = cookie ?? '';
+    if (auth.isEmpty) return const [];
+    final out = <FanqieHistoryEntry>[];
+    final seen = <String>{};
+    var offset = 0;
+    for (var page = 0; page < maxPages; page++) {
+      final data = await fetchReadHistory(offset: offset);
+      if (data == null) break;
+      final list = data['data_list'];
+      if (list is! List) break;
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        if (raw['is_delete'] == true || raw['is_delete'] == 1) continue;
+        if (_int(raw['book_type']) != 0) continue;
+        final id = _string(raw['book_id_str']) ?? _string(raw['book_id']);
+        if (id == null || id.isEmpty) continue;
+        final stamp = _int(raw['read_timestamp_ms']);
+        if (stamp == null || stamp <= 0) continue;
+        if (!seen.add(id)) continue;
+        out.add(
+          FanqieHistoryEntry(
+            bookId: id,
+            title: _string(raw['book_name']) ?? '',
+            coverUrl: appCoverUrl(_string(raw['thumb_url'])),
+            readAt: DateTime.fromMillisecondsSinceEpoch(stamp),
+          ),
+        );
+      }
+      final more = data['has_more'] == true;
+      final next = _int(data['next_offset']) ?? 0;
+      if (!more || next <= offset) break;
+      offset = next;
+    }
+    out.sort((a, b) => b.readAt.compareTo(a.readAt));
+    return out;
+  }
   /// 一章的听书音轨信息。番茄给的是**加密**的 MP4，光有 URL 播不了。
   Future<FanqieAudioTrack?> fetchAudioTrack(
     String bookId,
@@ -1707,6 +1751,21 @@ double? _double(Object? value) {
 }
 
 /// 一条书评。
+/// 一条「最近读过」。番茄的历史接口里没有章节位置，别指望能恢复到第几章。
+class FanqieHistoryEntry {
+  const FanqieHistoryEntry({
+    required this.bookId,
+    required this.title,
+    required this.readAt,
+    this.coverUrl,
+  });
+
+  final String bookId;
+  final String title;
+  final DateTime readAt;
+  final String? coverUrl;
+}
+
 class FanqieReview {
   const FanqieReview({
     required this.id,
@@ -1718,7 +1777,8 @@ class FanqieReview {
     this.replies = 0,
     this.createdAt,
     this.isAuthor = false,
-    this.readMinutes = 0,
+    this.readSeconds = 0,
+    this.imageUrls = const [],
   });
 
   final String id;
@@ -1735,8 +1795,11 @@ class FanqieReview {
   /// 作者本人下场写的（番茄会标出来）。
   final bool isAuthor;
 
-  /// 评论者说自己的阅读时长，单位分钟。
-  final int readMinutes;
+  /// 评论者说自己的阅读时长，单位**秒**（番茄给的是秒，别当分钟）。
+  final int readSeconds;
+
+  /// 评论里附的图。老书评是 URL 串，新评论服务是 `{web_url: ...}`。
+  final List<String> imageUrls;
 
   static FanqieReview? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -1758,9 +1821,25 @@ class FanqieReview {
           ? null
           : DateTime.fromMillisecondsSinceEpoch(stamp * 1000),
       isAuthor: info['is_author'] == true,
-      readMinutes: _int(raw['read_duration']) ?? 0,
+      readSeconds: _int(raw['read_duration']) ?? 0,
+      imageUrls: _commentImageUrls(raw['images']),
     );
   }
+}
+
+/// 评论配图：可能是 URL 字符串，也可能是 `{web_url: ...}`。
+List<String> _commentImageUrls(Object? raw) {
+  if (raw is! List) return const [];
+  final out = <String>[];
+  for (final item in raw) {
+    final value = item is Map ? item['web_url'] : item;
+    if (value is! String) continue;
+    final url = value.trim();
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      out.add(url);
+    }
+  }
+  return List.unmodifiable(out);
 }
 
 /// 一页书评。

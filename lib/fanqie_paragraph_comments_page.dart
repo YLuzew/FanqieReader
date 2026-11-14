@@ -6,6 +6,7 @@ import 'app_language.dart';
 import 'app_ui.dart';
 import 'archive_design.dart';
 import 'fanqie_api.dart';
+import 'fanqie_reviews_page.dart' show CommentImageStrip;
 import 'feature_pages.dart';
 
 /// 某一段被划线的正文下面那串评论。
@@ -252,6 +253,10 @@ class _CommentTile extends StatelessWidget {
                     color: scheme.onSurface,
                   ),
                 ),
+                if (review.imageUrls.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  CommentImageStrip(urls: review.imageUrls),
+                ],
                 if (review.likes > 0) ...[
                   const SizedBox(height: 6),
                   Row(

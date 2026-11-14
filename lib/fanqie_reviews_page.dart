@@ -251,6 +251,10 @@ class _ReviewTile extends StatelessWidget {
             review.text,
             style: const TextStyle(fontSize: 14, height: 1.68),
           ),
+          if (review.imageUrls.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            CommentImageStrip(urls: review.imageUrls),
+          ],
           if (review.likes > 0 || review.replies > 0) ...[
             const SizedBox(height: 6),
             Row(
@@ -302,7 +306,10 @@ class _ReviewTile extends StatelessWidget {
     }
     final at = review.createdAt;
     if (at != null) parts.add(_ago(at));
-    if (review.readMinutes > 0) parts.add('读了 ${review.readMinutes} 分钟');
+    if (review.readSeconds > 0) {
+      final minutes = review.readSeconds ~/ 60;
+      if (minutes > 0) parts.add('读了 $minutes 分钟');
+    }
     return parts.join(' · ');
   }
 
@@ -349,6 +356,77 @@ class _Avatar extends StatelessWidget {
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => fallback,
       ),
+    );
+  }
+}
+
+
+/// 评论配图。一行最多三张，点开看大图。
+class CommentImageStrip extends StatelessWidget {
+  const CommentImageStrip({super.key, required this.urls});
+
+  final List<String> urls;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final shown = urls.take(3).toList();
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final url in shown)
+          GestureDetector(
+            onTap: () => showCupertinoDialog<void>(
+              context: context,
+              builder: (dialog) => GestureDetector(
+                onTap: () => Navigator.of(dialog).pop(),
+                child: Container(
+                  color: const Color(0xEE000000),
+                  alignment: Alignment.center,
+                  child: InteractiveViewer(
+                    minScale: .8,
+                    maxScale: 3,
+                    child: Image.network(url, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                url,
+                width: 86,
+                height: 86,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Container(
+                  width: 86,
+                  height: 86,
+                  color: scheme.surfaceContainerHighest.withValues(alpha: .4),
+                  child: Icon(
+                    CupertinoIcons.photo,
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (urls.length > shown.length)
+          Container(
+            width: 86,
+            height: 86,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: scheme.surfaceContainerHighest.withValues(alpha: .4),
+            ),
+            child: AppText(
+              '+${urls.length - shown.length}',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -7,6 +7,8 @@ import 'bookmark_library_page.dart';
 import 'reading_statistics_page.dart';
 import 'catalog.dart';
 import 'dock_layout.dart';
+import 'fanqie_history_page.dart';
+import 'fanqie_repository.dart';
 import 'feature_pages.dart';
 import 'library_state.dart';
 import 'offline_repository.dart';
@@ -186,6 +188,27 @@ class MyPage extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 24),
+              if (fanqieRepositoryOf(repository) case final fanqie?
+                  when features?.account?.authenticated == true) ...[
+                FeatureEntry(
+                  key: const ValueKey('my-fanqie-history'),
+                  title: '最近读过',
+                  subtitle: '番茄账号里的阅读记录',
+                  icon: CupertinoIcons.time,
+                  onTap: () {
+                    pushNovelPage<void>(
+                      context,
+                      FanqieHistoryPage(
+                        api: fanqie.api,
+                        state: state,
+                        repository: repository,
+                      ),
+                      reduceMotion: state.reduceMotion,
+                    );
+                  },
+                ),
+                const SizedBox(height: 14),
+              ],
               FeatureEntry(
                 key: const ValueKey('my-statistics'),
                 title: '统计',
