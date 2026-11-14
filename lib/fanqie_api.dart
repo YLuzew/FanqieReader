@@ -670,7 +670,7 @@ class FanqieApi {
           FanqieHistoryEntry(
             bookId: id,
             title: _string(raw['book_name']) ?? '',
-            coverUrl: appCoverUrl(_string(raw['thumb_url'])),
+            coverUrl: FanqieBook.appCoverUrl(_string(raw['thumb_url'])),
             readAt: DateTime.fromMillisecondsSinceEpoch(stamp),
           ),
         );
@@ -1621,7 +1621,7 @@ class FanqieBook {
       title: title,
       author: _string(raw['author']) ?? '佚名',
       summary: _string(raw['abstract']) ?? '',
-      coverUrl: appCoverUrl(_string(raw['thumb_url'])),
+      coverUrl: FanqieBook.appCoverUrl(_string(raw['thumb_url'])),
       chapterCount: _int(raw['serial_count']) ?? 0,
       wordCount: _int(raw['word_number']) ?? 0,
       // 和网页版一致：0 = 已完结，1 = 连载中。
