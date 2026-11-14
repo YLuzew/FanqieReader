@@ -1177,6 +1177,91 @@ class FanqieApi {
     return out;
   }
 
+  /// 某一段的段评正文。
+  ///
+  /// 和书评同一个网关、同一个 body 骨架，区别在三处：`group_id` 用书号
+  /// （不是章节 id）、`comment_type=2`（填 0/1 会回 `comment_type invalid`）、
+  /// `para_index` 指段落序号。翻页靠 `common_list_info.cursor`，把那一串
+  /// 原样塞回 body 的 `cursor` 字段即可。
+  Future<FanqieParagraphComments> fetchParagraphComments(
+    String bookId, {
+    required int paragraphIndex,
+    String cursor = '',
+    int count = 20,
+  }) async {
+    final query =
+        'iid=${session.installId}&device_id=${session.deviceId}'
+        '&ac=wifi&channel=xiaomi_1967_64&aid=1967&app_name=novelapp'
+        '&version_code=72432&version_name=7.2.4.32&device_platform=android'
+        '&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi'
+        '&language=zh&os_api=36&os_version=16&manifest_version_code=72432'
+        '&resolution=1280%2A2620&dpi=520&update_version_code=72432'
+        '&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72432'
+        '&compliance_status=0&need_personal_recommend=1&player_so_load=1'
+        '&is_android_pad_screen=0';
+    final body = <String, Object?>{
+      'business_param': {
+        'book_id': bookId,
+        'comment_sort_debug': false,
+        'end_offset_time': 0,
+        'fold_type': 0,
+        'item_count': 0,
+        'item_version': '',
+        'max_item_count': 0,
+        'need_danmaku_occlusion_face_data': false,
+        'para_index': paragraphIndex,
+        'playlet_item_duration': 0,
+        'read_item_count': 0,
+        'req_type': 0,
+        'start_offset_time': 0,
+        'need_count': cursor.isEmpty,
+      },
+      'comment_source': 1,
+      'comment_type': 2,
+      'count': count,
+      'group_id': bookId,
+      'group_type': 1,
+      'server_channel': 7,
+      'sort': 1,
+    };
+    if (cursor.isNotEmpty) body['cursor'] = cursor;
+    final bytes = await _appPost(
+      '/novel/commentapi/comment/list/$bookId/v1/',
+      query,
+      utf8.encode(jsonEncode(body)),
+      host: FanqieEndpoints.shelfHost,
+    );
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return const FanqieParagraphComments(reviews: []);
+    final data = decoded['data'];
+    if (data is! Map) return const FanqieParagraphComments(reviews: []);
+    final list = data['data_list'];
+    final reviews = <FanqieReview>[];
+    if (list is List) {
+      for (final item in list) {
+        if (item is! Map) continue;
+        final inner = item['comment'];
+        final review = FanqieReview.fromJson(inner is Map ? inner : item);
+        if (review != null) reviews.add(review);
+      }
+    }
+    final info = data['common_list_info'];
+    var hasMore = false;
+    var next = '';
+    var total = 0;
+    if (info is Map) {
+      hasMore = info['has_more'] == true;
+      next = _string(info['cursor']) ?? '';
+      total = _int(info['total']) ?? 0;
+    }
+    return FanqieParagraphComments(
+      reviews: reviews,
+      hasMore: hasMore,
+      cursor: next,
+      total: total,
+    );
+  }
+
   /// 一本书的书评列表。
   ///
   /// 走 api3 的老接口（版本号填 5.1.5.32、`version_code=515` 那套），
@@ -1704,4 +1789,19 @@ class FanqieAudioTrack {
   final String spadeA;
   final bool encrypted;
   final int quality;
+}
+
+/// 某一段的段评列表。`cursor` 是服务端签的一串 JSON，翻页时原样回传。
+class FanqieParagraphComments {
+  const FanqieParagraphComments({
+    required this.reviews,
+    this.hasMore = false,
+    this.cursor = '',
+    this.total = 0,
+  });
+
+  final List<FanqieReview> reviews;
+  final bool hasMore;
+  final String cursor;
+  final int total;
 }

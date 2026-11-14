@@ -27,6 +27,7 @@ import 'fanqie_api.dart';
 import 'fanqie_filter_sheet.dart';
 import 'fanqie_repository.dart';
 import 'fanqie_listen_page.dart';
+import 'fanqie_paragraph_comments_page.dart';
 import 'fanqie_reviews_page.dart';
 import 'archive_carousel.dart';
 import 'backup_page.dart';
@@ -11182,15 +11183,40 @@ class _ReaderPageState extends State<ReaderPage>
                 itemCount: entries.length,
                 itemBuilder: (context, i) {
                   final entry = entries[i];
-                  final raw = content != null && entry.key < content.paragraphs.length
-                      ? content.paragraphs[content.order.elementAt(entry.key)]
+                  final order = content?.order;
+                  final paragraph =
+                      content != null &&
+                          order != null &&
+                          entry.key < order.length
+                      ? content.paragraphs[order.elementAt(entry.key)]
                       : '';
-                  final preview = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+                  final preview = paragraph.replaceAll(RegExp(r'\s+'), ' ').trim();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 14),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: () => Navigator.of(sheetContext).pop(),
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(
+                          pushNovelPage<void>(
+                            context,
+                            FanqieParagraphCommentsPage(
+                              api: fanqie.api,
+                              bookId: '$remote',
+                              bookTitle: _sourceBook.title,
+                              paragraphIndex: entry.key,
+                              quote: preview,
+                              initialCount: entry.value,
+                            ),
+                            reduceMotion: _reduceMotion,
+                            explorationKey: (
+                              'fanqie-notes',
+                              _sourceBook.id,
+                              entry.key,
+                            ),
+                          ),
+                        );
+                      },
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Column(
