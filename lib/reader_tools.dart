@@ -68,6 +68,10 @@ class ReaderOpenComments extends ReaderToolAction {
   const ReaderOpenComments();
 }
 
+class ReaderOpenAudio extends ReaderToolAction {
+  const ReaderOpenAudio();
+}
+
 class ReaderOpenListening extends ReaderToolAction {
   const ReaderOpenListening();
 }
@@ -1795,6 +1799,18 @@ class _ReaderToolsState extends State<ReaderTools>
   List<Widget> _behaviorItems(BuildContext context, String category) {
     final prefs = _readerPreferences;
     return [
+      if (category == 'turn' && _isFanqie)
+        GlassTextButton(
+          key: const ValueKey('reader-chapter-audio'),
+          onPressed: () => Navigator.pop(context, const ReaderOpenAudio()),
+          child: const Row(
+            children: [
+              ArchiveIcon(CupertinoIcons.headphones, size: 20),
+              SizedBox(width: 12),
+              Expanded(child: AppText('听书')),
+            ],
+          ),
+        ),
       if (category == 'turn' && _isFanqie)
         GlassTextButton(
           key: const ValueKey('reader-chapter-comments'),

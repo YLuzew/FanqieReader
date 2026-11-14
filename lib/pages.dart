@@ -26,6 +26,7 @@ import 'author_works_page.dart';
 import 'fanqie_api.dart';
 import 'fanqie_filter_sheet.dart';
 import 'fanqie_repository.dart';
+import 'fanqie_listen_page.dart';
 import 'fanqie_reviews_page.dart';
 import 'archive_carousel.dart';
 import 'backup_page.dart';
@@ -11110,6 +11111,22 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
+  Future<void> _openChapterAudio() async {
+    final fanqie = fanqieRepositoryOf(widget.repository);
+    if (fanqie == null) return;
+    await pushNovelPage<void>(
+      context,
+      FanqieListenPage(
+        book: _sourceBook,
+        startChapter: _chapter,
+        repository: fanqie,
+        reduceMotion: _reduceMotion,
+      ),
+      reduceMotion: _reduceMotion,
+      explorationKey: ('fanqie-audio', _sourceBook.id, false),
+    );
+  }
+
   /// 段评面板：列出本章哪些段落有人划过线、各有多少条。
   ///
   /// 番茄只给「第几段 + 条数」，具体评论要另走一条对 body 极挑剔的
@@ -11268,6 +11285,9 @@ class _ReaderPageState extends State<ReaderPage>
       case ReaderOpenComments():
         _toolsOpen = false;
         await _openChapterComments();
+      case ReaderOpenAudio():
+        _toolsOpen = false;
+        await _openChapterAudio();
       case ReaderOpenListening():
         _toolsOpen = false;
         await _settings(scope: ReaderToolsScope.listening, fromDock: false);

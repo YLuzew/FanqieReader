@@ -4,6 +4,9 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:path_provider/path_provider.dart';
+
+import 'fanqie_audio.dart';
 import 'fanqie_sign.dart';
 
 // 番茄小说的传输层。
@@ -109,6 +112,8 @@ abstract final class FanqieEndpoints {
 
   /// 听书的 TTS 播放地址。`tone_id` 默认 74，填 0 会 `NO_THIS_TONE`。
   static const audioPlayInfo = '/reading/reader/audio/playinfo/';
+  /// 听书走 api5 这台，`readingHost` 上没有这个接口。
+  static const audioHost = 'api5-normal-sinfonlineb.fqnovel.com';
 
   /// 书架/历史/进度走的是 api5-normal-*，不是正文那台网关。
   /// 路径取自 fqapp 的 account_library.rs（官方 App 的 RPC 反查）。
@@ -632,6 +637,92 @@ class FanqieApi {
     final data = decoded['data'];
     return data is Map ? Map<String, Object?>.from(data) : null;
   }
+  /// 一章的听书音轨信息。番茄给的是**加密**的 MP4，光有 URL 播不了。
+  Future<FanqieAudioTrack?> fetchAudioTrack(
+    String bookId,
+    String itemId, {
+    int toneId = 74,
+  }) async {
+    final query =
+        'book_id=$bookId&item_ids=$itemId&tone_id=$toneId'
+        '&req_type=0&is_local_book=false&$_homeBaseQuery';
+    final payload = await _appJson(
+      FanqieEndpoints.audioPlayInfo,
+      query,
+      host: FanqieEndpoints.audioHost,
+    );
+    final data = payload['data'];
+    if (data is! List || data.isEmpty) return null;
+    final first = data.first;
+    if (first is! Map) return null;
+    final map = first.cast<String, Object?>();
+    final url = _string(map['main_url']) ?? _string(map['backup_url']);
+    if (url == null || url.isEmpty) return null;
+    var spadeA = '';
+    final rawModel = _string(map['video_model']);
+    if (rawModel != null && rawModel.isNotEmpty) {
+      try {
+        final model = jsonDecode(rawModel);
+        if (model is Map) {
+          final list = model['video_list'];
+          if (list is List && list.isNotEmpty) {
+            final variant = list.first;
+            if (variant is Map) {
+              final info = variant['encrypt_info'];
+              if (info is Map) spadeA = _string(info['spade_a']) ?? '';
+            }
+          }
+        }
+      } on FormatException {
+        // 结构不认识就当没加密信息，后面按明文播。
+      }
+    }
+    return FanqieAudioTrack(
+      url: url,
+      spadeA: spadeA,
+      encrypted: map['is_encrypt'] == true,
+      quality: _int(map['quality']) ?? 128,
+    );
+  }
+
+  /// 下一章听书音频，解好密落到磁盘，返回可以直接喂给播放器的文件。
+  ///
+  /// 缓存按 `bookId/itemId-tone.mp4` 存，同一个音色第二次点开是秒开。
+  Future<File?> fetchChapterAudio(
+    String bookId,
+    String itemId, {
+    int toneId = 74,
+    Directory? cacheDirectory,
+  }) async {
+    final track = await fetchAudioTrack(bookId, itemId, toneId: toneId);
+    if (track == null) return null;
+    final root =
+        cacheDirectory ??
+        Directory('${(await getApplicationSupportDirectory()).path}/fanqie-audio');
+    final file = File('${root.path}/$bookId-$itemId-$toneId.mp4');
+    if (await file.exists() && await file.length() > 1024) return file;
+    final response = await _client
+        .getUrl(Uri.parse(track.url))
+        .timeout(const Duration(seconds: 60));
+    final bytes = await response.close().fold<BytesBuilder>(
+      BytesBuilder(copy: false),
+      (builder, chunk) => builder..add(chunk),
+    );
+    var data = bytes.takeBytes();
+    if (data.length < 4096) return null;
+    if (track.encrypted) {
+      final decrypted = await FanqieAudioCipher.decrypt(
+        encrypted: data,
+        spadeA: track.spadeA,
+      );
+      if (decrypted == null) return null;
+      data = decrypted;
+    }
+    await root.create(recursive: true);
+    await file.writeAsBytes(data, flush: true);
+    return file;
+  }
+
 
   /// 书名搜索。
   ///
@@ -1598,4 +1689,19 @@ class FanqieReviewPage {
   final int? nextOffset;
   final int scoreCount;
   final int commentCount;
+}
+
+/// 听书音轨的元信息。
+class FanqieAudioTrack {
+  const FanqieAudioTrack({
+    required this.url,
+    required this.spadeA,
+    required this.encrypted,
+    required this.quality,
+  });
+
+  final String url;
+  final String spadeA;
+  final bool encrypted;
+  final int quality;
 }
