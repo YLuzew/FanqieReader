@@ -393,6 +393,52 @@ class FanqieApi {
   ///
   /// 这类接口出错时会回一整页 HTML（状态码还是 200），直接 `jsonDecode`
   /// 抛的是 `FormatException`，看不出是哪个接口 —— 所以先看一眼开头。
+  /// App 网关的 POST。签名要用**原始 body 字节**算 x-ss-stub，
+  /// 所以这里收 `List<int>` 而不是先编码再传——编码一次、签一次，
+  /// 两边不一致就会被判签名错。
+  Future<Uint8List> _appPost(
+    String path,
+    String query,
+    List<int> body, {
+    String? host,
+    String? cookie,
+    String? userAgent,
+  }) async {
+    final signature = fanqieSignHeaders(
+      query: query,
+      body: body,
+      deviceId: session.deviceId,
+      installId: session.installId,
+    );
+    final uri = Uri.parse(
+      'https://${host ?? FanqieEndpoints.readingHost}$path?$query',
+    );
+    final request = await _client.postUrl(uri).timeout(timeout);
+    request.headers.set(
+      'User-Agent',
+      userAgent ?? FanqieEndpoints.appUserAgent,
+    );
+    request.headers.set('Accept', 'application/json');
+    request.headers.contentType = ContentType.json;
+    if (cookie != null && cookie.isNotEmpty) {
+      request.headers.set(HttpHeaders.cookieHeader, cookie);
+    }
+    signature.forEach(request.headers.set);
+    request.add(body);
+    final response = await request.close().timeout(timeout);
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+      if (bytes.length > _maxBody) {
+        throw const FanqieException('响应超过 12MB，已中断');
+      }
+    }
+    if (response.statusCode != 200) {
+      throw FanqieException('App 接口 HTTP ${response.statusCode}');
+    }
+    return Uint8List.fromList(bytes);
+  }
+
   Future<Map<String, Object?>> _appJson(
     String path,
     String query, {
@@ -987,6 +1033,58 @@ class FanqieApi {
     'itemIds': [itemId],
     'progress': progress,
   });
+
+  /// 一章的段评计数。
+  ///
+  /// 返回 `{段落索引: 条数}`。番茄的段评是按「第几段」挂的，段落切分
+  /// 用的是它自己的规则；我们这边的段落切分跟它不完全一致，所以这个
+  /// 数字只当热度提示用，别拿来找对应文字。
+  ///
+  /// 接口只给计数（`count`），具体评论要另走 comment/list —— 那条对
+  /// body 极挑，`group_id` 填 item_id 也回「参数错误」，暂时不动。
+  Future<Map<int, int>> fetchChapterCommentCounts(
+    String bookId,
+    String itemId,
+  ) async {
+    final query =
+        'iid=${session.installId}&device_id=${session.deviceId}'
+        '&ac=wifi&channel=xiaomi_1967_64&aid=1967&app_name=novelapp'
+        '&version_code=72432&version_name=7.2.4.32&device_platform=android'
+        '&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi'
+        '&language=zh&os_api=36&os_version=16&manifest_version_code=72432'
+        '&resolution=1280%2A2620&dpi=520&update_version_code=72432'
+        '&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72432'
+        '&compliance_status=0&need_personal_recommend=1&player_so_load=1'
+        '&is_android_pad_screen=0';
+    final body = jsonEncode({
+      'comment_source': 3,
+      'compliance_status': 0,
+      'item_id': itemId,
+      'item_version': '',
+      'server_channel': 7,
+    });
+    final bytes = await _appPost(
+      '/novel/commentapi/idea/list/$itemId/v1/',
+      query,
+      utf8.encode(body),
+      host: FanqieEndpoints.shelfHost,
+    );
+    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
+    if (decoded is! Map) return const {};
+    final data = decoded['data'];
+    if (data is! Map) return const {};
+    final table = data['data'];
+    if (table is! Map) return const {};
+    final out = <int, int>{};
+    for (final entry in table.entries) {
+      final index = int.tryParse('${entry.key}');
+      final row = entry.value;
+      if (index == null || row is! Map) continue;
+      final count = _int(row['count']) ?? 0;
+      if (count > 0) out[index] = count;
+    }
+    return out;
+  }
 
   /// 一本书的书评列表。
   ///

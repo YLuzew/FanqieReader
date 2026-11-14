@@ -1,3 +1,4 @@
+import 'fanqie_ids.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -61,6 +62,10 @@ class ReaderOpenIllustrations extends ReaderToolAction {
 
 class ReaderOpenHandoff extends ReaderToolAction {
   const ReaderOpenHandoff();
+}
+
+class ReaderOpenComments extends ReaderToolAction {
+  const ReaderOpenComments();
 }
 
 class ReaderOpenListening extends ReaderToolAction {
@@ -1780,9 +1785,28 @@ class _ReaderToolsState extends State<ReaderTools>
     ],
   );
 
+  /// 番茄书的 id 落在专用区间里（见 fanqie_ids.dart），文库书和本地书
+  /// 都不在里面 —— 拿它当「这本书有没有段评」的判据，比 import 整个
+  /// 番茄仓库轻。
+  bool get _isFanqie =>
+      widget.novel.id >= fanqieLocalIdStart &&
+      widget.novel.id <= fanqieLocalIdEnd;
+
   List<Widget> _behaviorItems(BuildContext context, String category) {
     final prefs = _readerPreferences;
     return [
+      if (category == 'turn' && _isFanqie)
+        GlassTextButton(
+          key: const ValueKey('reader-chapter-comments'),
+          onPressed: () => Navigator.pop(context, const ReaderOpenComments()),
+          child: const Row(
+            children: [
+              ArchiveIcon(CupertinoIcons.chat_bubble_2, size: 20),
+              SizedBox(width: 12),
+              Expanded(child: AppText('段评')),
+            ],
+          ),
+        ),
       if (category == 'turn' &&
           isLocalBook(widget.novel.id) &&
           widget.listeningBuilder != null)

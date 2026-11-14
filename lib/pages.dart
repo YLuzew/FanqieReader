@@ -11110,6 +11110,125 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
+  /// 段评面板：列出本章哪些段落有人划过线、各有多少条。
+  ///
+  /// 番茄只给「第几段 + 条数」，具体评论要另走一条对 body 极挑剔的
+  /// comment/list —— 那条现在还没啃下来，所以这里先给热度，让人知道
+  /// 这一章哪里被读得最狠。
+  Future<void> _openChapterComments() async {
+    final fanqie = fanqieRepositoryOf(widget.repository);
+    if (fanqie == null) return;
+    final remote = fanqie.ids.remoteIdFor(_sourceBook.id);
+    if (remote == null) return;
+    final index = _chapter.clamp(0, _sourceBook.chapters.length - 1);
+    final chapter = _sourceBook.chapters[index];
+    if (chapter.id == 0) return;
+    final content = _preparedContent[index];
+    Map<int, int> counts;
+    try {
+      counts = await fanqie.api.fetchChapterCommentCounts(
+        '$remote',
+        '${chapter.id}',
+      );
+    } on Object catch (failure) {
+      if (!mounted) return;
+      showNovelFeedback(context, '段评没拉到：$failure', haptic: HapticCue.error);
+      return;
+    }
+    if (!mounted) return;
+    if (counts.isEmpty) {
+      showNovelFeedback(context, '这一章还没有人划线');
+      return;
+    }
+    final entries = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final total = counts.values.fold<int>(0, (sum, value) => sum + value);
+    await showJellySheet<void>(
+      context: context,
+      reduceMotion: _reduceMotion,
+      heightFactor: .78,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+              child: ArchiveSection(
+                title: '段评',
+                code: 'CHAPTER / HIGHLIGHTS',
+                subtitle: '${counts.length} 段有人划线 · 共 $total 条',
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                itemCount: entries.length,
+                itemBuilder: (context, i) {
+                  final entry = entries[i];
+                  final raw = content != null && entry.key < content.paragraphs.length
+                      ? content.paragraphs[content.order.elementAt(entry.key)]
+                      : '';
+                  final preview = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => Navigator.of(sheetContext).pop(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                AppText(
+                                  '第 ${entry.key + 1} 段',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                AppText(
+                                  '${entry.value} 条',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (preview.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              AppText(
+                                preview.length > 80
+                                    ? '${preview.substring(0, 80)}…'
+                                    : preview,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  height: 1.55,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleReaderAction(ReaderToolAction? action) async {
     switch (action) {
       case ReaderEnterFocus():
@@ -11146,6 +11265,9 @@ class _ReaderPageState extends State<ReaderPage>
         // The settings surface has fully collapsed before opening the next.
         _toolsOpen = false;
         await _findInChapter();
+      case ReaderOpenComments():
+        _toolsOpen = false;
+        await _openChapterComments();
       case ReaderOpenListening():
         _toolsOpen = false;
         await _settings(scope: ReaderToolsScope.listening, fromDock: false);
