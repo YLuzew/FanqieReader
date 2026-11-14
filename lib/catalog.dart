@@ -18,6 +18,8 @@ class Novel {
     this.lastUpdate,
     this.chapterCount = 0,
     this.navigation,
+    this.score,
+    this.reviewCount,
   });
 
   final int id;
@@ -32,6 +34,12 @@ class Novel {
   final String? lastUpdate;
   final int chapterCount;
   final BookNavigation? navigation;
+
+  /// 番茄的读者评分，0~10。别家书源没有这个字段，所以是可空的。
+  final double? score;
+
+  /// 有多少人打过分。
+  final int? reviewCount;
 
   /// Public directory rows can target any preserved reading section. A resource
   /// missing from the authored TOC remains reachable by normal page turns.

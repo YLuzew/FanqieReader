@@ -454,6 +454,8 @@ class FanqieRepository extends NovelRepository
     coverUrl: book.coverUrl.isEmpty ? null : book.coverUrl,
     lastUpdate: book.lastChapterTitle.isEmpty ? null : book.lastChapterTitle,
     chapterCount: book.chapterCount,
+    score: book.score,
+    reviewCount: book.reviewCount,
   );
 
   /// 从用户输入里认出一个 bookId。

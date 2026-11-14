@@ -26,6 +26,7 @@ import 'author_works_page.dart';
 import 'fanqie_api.dart';
 import 'fanqie_filter_sheet.dart';
 import 'fanqie_repository.dart';
+import 'fanqie_reviews_page.dart';
 import 'archive_carousel.dart';
 import 'backup_page.dart';
 import 'haptic_settings_page.dart';
@@ -4554,6 +4555,27 @@ class _DetailPageState extends State<DetailPage> with TickerProviderStateMixin {
   final Set<String> _directoryVolumeKeys = {};
   int? _directoryBook;
 
+  /// 书评页。番茄的 bookId 是 19 位十进制，本地 id 是映射过的，
+  /// 这里必须换回远端 id，否则接口会拿一个不存在的书号去查。
+  void _openReviews(BuildContext context) {
+    final fanqie = fanqieRepositoryOf(repository);
+    if (fanqie == null) return;
+    final remote = fanqie.ids.remoteIdFor(novel.id);
+    if (remote == null) return;
+    pushNovelPage<void>(
+      context,
+      FanqieReviewsPage(
+        bookId: '$remote',
+        bookTitle: novel.title,
+        api: fanqie.api,
+        initialScore: novel.score,
+        initialScoreCount: novel.reviewCount,
+      ),
+      reduceMotion: _reduceMotion,
+      explorationKey: ('fanqie-reviews', novel.id, false),
+    );
+  }
+
   List<({NovelVolume? volume, int? chapter})> _directory() {
     // Provisional cached chapters can predate volume metadata. Wait for the
     // displayed directory before choosing its initially expanded volume.
@@ -5140,6 +5162,50 @@ class _DetailPageState extends State<DetailPage> with TickerProviderStateMixin {
                   ),
                 ),
               ),
+            if (!isLoading && novel.score != null) ...[
+              const SizedBox(height: 4),
+              Semantics(
+                button: true,
+                label: '查看书评',
+                child: JellyTapSurface(
+                  key: const ValueKey('detail-reviews'),
+                  onTap: () => _openReviews(context),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ArchiveIcon(
+                          CupertinoIcons.star_fill,
+                          size: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 4),
+                        AppText(
+                          _scoreLabel(novel),
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                            fontSize: 13,
+                            height: 1.55,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        ArchiveIcon(
+                          CupertinoIcons.chevron_right,
+                          size: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant.withValues(alpha: .7),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
             if (!isLoading && loadError == null && _updateLabel != null) ...[
               const SizedBox(height: 4),
               AppText(
@@ -11267,4 +11333,16 @@ class _ReaderPageState extends State<ReaderPage>
       _findOpen = false;
     }
   }
+}
+
+/// 番茄评分那行：`8.8 · 1.2万人评`。人数过万折一下，不然一排数字太长。
+String _scoreLabel(Novel novel) {
+  final score = novel.score!.toStringAsFixed(1);
+  final count = novel.reviewCount ?? 0;
+  if (count <= 0) return '$score 分';
+  if (count >= 10000) {
+    final wan = (count / 10000).toStringAsFixed(count >= 100000 ? 0 : 1);
+    return '$score 分 · ${wan}万人评';
+  }
+  return '$score 分 · $count 人评';
 }

@@ -96,6 +96,20 @@ abstract final class FanqieEndpoints {
   /// 必须从上一页的响应里取，自己编一个会拿到空列表。
   static const homeFeed = '/reading/bookapi/bookmall/cell/change/v';
 
+  /// 书评（长评）走的是 api3 —— 这是老版本 5.1.5.32 的接口，反而比现在的
+  /// `/novel/commentapi/comment/list/{id}/v1` 好使：新接口对 body 命名极挑，
+  /// snake_case 回 `lack book_id`、camelCase 回 `cannot found handler key`，
+  /// `source`/`channel` 传哪都不认。这条老接口一次 20 条，`offset` 翻页。
+  static const commentHost = 'api3-normal-sinfonlineb.fqnovel.com';
+  static const bookReviews = '/reading/ugc/novel_comment/book/v/';
+
+  /// 段评（被人划线的那几段）。只回「哪段有划线 + 那段原文」，
+  /// 具体评论不在这条接口里。
+  static const chapterSummaries = '/reading/reader/item_summary/mget/v';
+
+  /// 听书的 TTS 播放地址。`tone_id` 默认 74，填 0 会 `NO_THIS_TONE`。
+  static const audioPlayInfo = '/reading/reader/audio/playinfo/';
+
   /// 书架/历史/进度走的是 api5-normal-*，不是正文那台网关。
   /// 路径取自 fqapp 的 account_library.rs（官方 App 的 RPC 反查）。
   static const shelfList = '/reading/bookapi/bookshelf/list/v1/';
@@ -974,6 +988,43 @@ class FanqieApi {
     'progress': progress,
   });
 
+  /// 一本书的书评列表。
+  ///
+  /// 走 api3 的老接口（版本号填 5.1.5.32、`version_code=515` 那套），
+  /// 这是实测唯一能通的一条：新接口对 body 命名极度挑剔，怎么拼都
+  /// 只回 `lack book_id` 或 `cannot found handler key`。
+  Future<FanqieReviewPage> fetchBookReviews(
+    String bookId, {
+    int offset = 0,
+    int count = 20,
+  }) async {
+    final query =
+        'app_name=novelapp&channel=0&book_id=$bookId&device_type=Honor10'
+        '&aid=1967&version_name=5.1.5.32&count=$count&os_version=9.3.5'
+        '&device_platform=android&version_code=515'
+        '&device_id=${session.deviceId}&offset=$offset';
+    final payload = await _appJson(
+      FanqieEndpoints.bookReviews,
+      query,
+      host: FanqieEndpoints.commentHost,
+    );
+    final data = payload['data'];
+    final map = data is Map ? data : const <String, Object?>{};
+    final raw = map['comment'];
+    final reviews = <FanqieReview>[
+      if (raw is List)
+        for (final item in raw)
+          if (FanqieReview.fromJson(item) case final review?) review,
+    ];
+    return FanqieReviewPage(
+      reviews: reviews,
+      hasMore: map['has_more'] == true,
+      nextOffset: _int(map['next_offset']),
+      scoreCount: _int(map['score_cnt']) ?? 0,
+      commentCount: _int(map['comment_cnt']) ?? 0,
+    );
+  }
+
   Future<Map<String, Object?>> _readerJson(
     String path,
     Map<String, String> query,
@@ -1190,6 +1241,8 @@ class FanqieBook {
     required this.completed,
     required this.category,
     required this.lastChapterTitle,
+    this.score,
+    this.reviewCount,
   });
 
   final String id;
@@ -1202,6 +1255,12 @@ class FanqieBook {
   final bool completed;
   final String category;
   final String lastChapterTitle;
+
+  /// 番茄自己的评分（`score`，0~10，一位小数）。没评分的老书会是 null。
+  final double? score;
+
+  /// 参与评分的人数，番茄叫 `score_count`。
+  final int? reviewCount;
 
   static FanqieBook? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -1223,6 +1282,8 @@ class FanqieBook {
       completed: (_int(raw['creationStatus']) ?? 1) == 0,
       category: _string(raw['category']) ?? '',
       lastChapterTitle: _string(raw['lastChapterTitle']) ?? '',
+      score: _double(raw['score']),
+      reviewCount: _int(raw['scoreNum']) ?? _int(raw['score_num']),
     );
   }
 
@@ -1248,6 +1309,8 @@ class FanqieBook {
           _string(raw['last_chapter_title']) ??
           _string(raw['first_chapter_title']) ??
           '',
+      score: _double(raw['score']),
+      reviewCount: _int(raw['score_count']) ?? _int(raw['score_num']),
     );
   }
 
@@ -1355,4 +1418,86 @@ int? _int(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value);
   return null;
+}
+
+/// 评分是浮点（`8.8`），有时又会以字符串形式回来，所以单开一个。
+double? _double(Object? value) {
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
+}
+
+/// 一条书评。
+class FanqieReview {
+  const FanqieReview({
+    required this.id,
+    required this.text,
+    required this.userName,
+    this.avatarUrl,
+    this.score,
+    this.likes = 0,
+    this.replies = 0,
+    this.createdAt,
+    this.isAuthor = false,
+    this.readMinutes = 0,
+  });
+
+  final String id;
+  final String text;
+  final String userName;
+  final String? avatarUrl;
+
+  /// 这条书评自己打的星，0~10，可能没填。
+  final double? score;
+  final int likes;
+  final int replies;
+  final DateTime? createdAt;
+
+  /// 作者本人下场写的（番茄会标出来）。
+  final bool isAuthor;
+
+  /// 评论者说自己的阅读时长，单位分钟。
+  final int readMinutes;
+
+  static FanqieReview? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final text = _string(raw['text']);
+    if (text == null) return null;
+    final user = raw['user_info'];
+    final info = user is Map ? user : const <String, Object?>{};
+    final stamp = _int(raw['create_timestamp']);
+    return FanqieReview(
+      id: _string(raw['comment_id']) ?? '',
+      text: text,
+      userName:
+          _string(info['user_name']) ?? _string(raw['user_name']) ?? '读者',
+      avatarUrl: _string(info['user_avatar']),
+      score: _double(raw['score']),
+      likes: _int(raw['digg_count']) ?? 0,
+      replies: _int(raw['reply_count']) ?? 0,
+      createdAt: stamp == null || stamp <= 0
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(stamp * 1000),
+      isAuthor: info['is_author'] == true,
+      readMinutes: _int(raw['read_duration']) ?? 0,
+    );
+  }
+}
+
+/// 一页书评。
+class FanqieReviewPage {
+  const FanqieReviewPage({
+    required this.reviews,
+    required this.hasMore,
+    this.nextOffset,
+    this.scoreCount = 0,
+    this.commentCount = 0,
+  });
+
+  final List<FanqieReview> reviews;
+  final bool hasMore;
+  final int? nextOffset;
+  final int scoreCount;
+  final int commentCount;
 }
